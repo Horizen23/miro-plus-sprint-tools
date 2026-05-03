@@ -2,7 +2,8 @@
 
 import { useEffect } from 'react';
 import type { CustomAction, CustomEvent, Card } from "@mirohq/websdk-types";
-import { getSocket } from '@/utils/socket';
+import { RealtimeFactory } from '@/services/realtime/factory';
+import { VotingState } from '@/services/realtime/types';
 import { VotingSession } from '@/hooks/useVotingSession';
 import { JiraService } from '@/utils/jiraService';
 
@@ -163,18 +164,15 @@ export default function InitContent() {
       } catch (e) {
         console.warn("Failed to register custom actions", e);
       }
-      const socket = getSocket();
-      if (!socket) {
-        console.error("InitContent: Failed to get socket");
-        return;
-      }
+      const realtime = RealtimeFactory.getInstance();
+      realtime.connect();
 
-      console.log("InitContent: Socket initialized, waiting for voting events...");
+      console.log("InitContent: Realtime initialized, waiting for voting events...");
 
       let activeModalCardId: string | null = null;
 
       // Listen for any voting state update to discover sessions without polling the board
-      socket.on("voting-state-updated", async (state: any) => {
+      realtime.onStateUpdate(async (state: VotingState) => {
         console.log("InitContent: Received voting-state-updated event:", state);
         
         if (state.status === 'voting') {
@@ -196,14 +194,10 @@ export default function InitContent() {
               width: 450,
               height: 750,
             });
-            // When modal is closed (if openModal promise resolves on close in some SDK versions, 
-            // though usually it doesn't, we might need a heartbeat or close event)
           } catch (e) {
             console.error("InitContent: Error opening modal", e);
           }
         } else if (state.status === null || state.status === 'revealed') {
-          // If session ends or reveals, we might want to allow reopening later if it starts again
-          // Note: don't clear on 'revealed' if you want to keep the modal open during discussion
           if (state.status === null) {
             activeModalCardId = null;
           }

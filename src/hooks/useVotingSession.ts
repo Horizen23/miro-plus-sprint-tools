@@ -1,5 +1,6 @@
 import * as React from "react";
-import { getSocket } from "../utils/socket";
+import { RealtimeFactory } from "../services/realtime/factory";
+import { VotingState } from "../services/realtime/types";
 
 export interface VotingSession {
   cardId: string;
@@ -53,24 +54,24 @@ export function useVotingSession(
     fetchUser();
   }, []);
 
-  // Socket.io integration
+  // Realtime Integration (Adapter Pattern)
   React.useEffect(() => {
-    const socket = getSocket();
-    if (!socket) return;
+    const realtime = RealtimeFactory.getInstance();
+    realtime.connect();
 
     // Join room if we have a session
     if (votingSession?.cardId && currentUserId) {
-      socket.emit("join-session", { cardId: votingSession.cardId, userId: currentUserId });
+      realtime.joinSession(votingSession.cardId, currentUserId);
     }
 
-    const handleUpdate = (state: any) => {
-      console.log("useVotingSession: Socket update received:", state);
+    const handleUpdate = (state: VotingSession) => {
+      console.log("useVotingSession: Realtime update received:", state);
       
       setVotingSession(prevSession => {
         // Handle session end
         if (state.status === null) {
           if (prevSession && state.cardId === prevSession.cardId) {
-            console.log("useVotingSession: Ending current session (from socket)");
+            console.log("useVotingSession: Ending current session (from realtime)");
             lastSessionId.current = null;
             return null;
           }
@@ -84,7 +85,7 @@ export function useVotingSession(
         
         // Discover NEW session
         if (!prevSession && state.status === 'voting' && state.cardId !== lastSessionId.current) {
-          console.log("useVotingSession: Picking up new session from socket:", state.cardId);
+          console.log("useVotingSession: Picking up new session from realtime:", state.cardId);
           return state;
         }
 
@@ -92,9 +93,10 @@ export function useVotingSession(
       });
     };
 
-    socket.on("voting-state-updated", handleUpdate);
+    realtime.onStateUpdate(handleUpdate as any);
     return () => {
-      socket.off("voting-state-updated", handleUpdate);
+      // Note: We don't necessarily want to disconnect on every re-render, 
+      // the factory manages the instance.
     };
   }, [votingSession?.cardId, currentUserId]);
 
@@ -112,11 +114,9 @@ export function useVotingSession(
             // Update local state immediately
             setVotingSession(metadata);
             
-            // Ensure socket server has this state (in case of server restart/lost memory)
-            const socket = getSocket();
-            if (socket) {
-              socket.emit("update-voting-state", { cardId: metadata.cardId, state: metadata });
-            }
+            // Ensure realtime server has this state (in case of server restart/lost memory)
+            const realtime = RealtimeFactory.getInstance();
+            realtime.updateState(metadata.cardId, metadata as any);
             
             // Notification trigger for others
             if (metadata.status === 'voting' && lastSessionId.current !== metadata.cardId) {
@@ -159,9 +159,9 @@ export function useVotingSession(
             cardId = id;
             setVotingSession(meta);
             
-            // Sync socket server
-            const socket = getSocket();
-            if (socket) socket.emit("update-voting-state", { cardId: id, state: meta });
+            // Sync realtime server
+            const realtime = RealtimeFactory.getInstance();
+            realtime.updateState(id, meta as any);
             break;
           }
         }
@@ -214,10 +214,8 @@ export function useVotingSession(
                 await card.setMetadata(votingMetaKey, updatedSession);
                 
                 // Broadcast the join to everyone else immediately
-                const socket = getSocket();
-                if (socket) {
-                  socket.emit("update-voting-state", { cardId: votingSession.cardId, state: updatedSession });
-                }
+                const realtime = RealtimeFactory.getInstance();
+                realtime.updateState(votingSession.cardId, updatedSession as any);
                 
                 setVotingSession(updatedSession);
               }
@@ -256,9 +254,9 @@ export function useVotingSession(
         await card.setMetadata(votingMetaKey, newSession);
         setVotingSession(newSession);
         
-        // Notify via socket
-        const socket = getSocket();
-        if (socket) socket.emit("update-voting-state", { cardId: card.id, state: newSession });
+        // Notify via realtime
+        const realtime = RealtimeFactory.getInstance();
+        realtime.updateState(card.id, newSession as any);
         
         setActiveTab('tools');
         await miro.board.notifications.showInfo("Voting started!");
@@ -270,8 +268,8 @@ export function useVotingSession(
         await card.sync();
         setVotingSession(newSession);
 
-        const socket = getSocket();
-        if (socket) socket.emit("update-voting-state", { cardId: card.id, state: newSession });
+        const realtime = RealtimeFactory.getInstance();
+        realtime.updateState(card.id, newSession as any);
 
         setActiveTab('tools');
       }
@@ -319,9 +317,9 @@ export function useVotingSession(
           await card.setMetadata(votingMetaKey, updatedSession);
           setVotingSession(updatedSession);
           
-          // Emit vote via socket for instant sync
-          const socket = getSocket();
-          if (socket) socket.emit("cast-vote", { cardId: votingSession.cardId, userId: currentUserId, vote: points });
+          // Emit vote via realtime for instant sync
+          const realtime = RealtimeFactory.getInstance();
+          realtime.castVote(votingSession.cardId, currentUserId, points);
           
           success = true;
         } catch (retryError) {
@@ -360,10 +358,8 @@ export function useVotingSession(
     await card.setMetadata(votingMetaKey, updatedSession);
     
     // Broadcast to everyone
-    const socket = getSocket();
-    if (socket) {
-      socket.emit("update-voting-state", { cardId: votingSession.cardId, state: updatedSession });
-    }
+    const realtime = RealtimeFactory.getInstance();
+    realtime.updateState(votingSession.cardId, updatedSession as any);
     
     setVotingSession(updatedSession);
   };
@@ -381,11 +377,9 @@ export function useVotingSession(
     const votingMetaKey = process.env.NEXT_PUBLIC_MIRO_METADATA_VOTING_KEY || "plus-sprint-tools";
     await card.setMetadata(votingMetaKey, updatedSession);
     
-    // Broadcast to everyone via socket
-    const socket = getSocket();
-    if (socket) {
-      socket.emit("update-voting-state", { cardId: votingSession.cardId, state: updatedSession });
-    }
+    // Broadcast to everyone via realtime
+    const realtime = RealtimeFactory.getInstance();
+    realtime.updateState(votingSession.cardId, updatedSession as any);
     
     setVotingSession(updatedSession);
   };
@@ -404,12 +398,9 @@ export function useVotingSession(
         console.log("useVotingSession: Miro metadata cleared");
       }
       
-      // Notify socket server to clear memory and broadcast to others
-      const socket = getSocket();
-      if (socket) {
-        console.log("useVotingSession: Emitting end-voting-session via socket");
-        socket.emit("end-voting-session", cardId);
-      }
+      // Notify realtime server to clear memory and broadcast to others
+      const realtime = RealtimeFactory.getInstance();
+      realtime.endSession(cardId);
       
       setVotingSession(null);
       lastSessionId.current = null;

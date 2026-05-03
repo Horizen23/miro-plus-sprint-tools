@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@mirohq/websdk-react-hooks": "^0.0.3",
+    "@supabase/supabase-js": "^2.105.1",
     "mirotone": "5",
     "next": "^15.3.2",
     "react": "^19.1.0",
