@@ -59,20 +59,36 @@ Create a `.env` file based on `.env.example` and configure these key variables:
 
 ---
 
-## 🏗️ Build & Run
+## 5. Deployment
+
+### Option A: Vercel (Recommended with Supabase)
+1.  **Push to GitHub**: Your code is already set up for this.
+2.  **Import to Vercel**: Connect your GitHub repository to Vercel.
+3.  **Environment Variables**:
+    *   In the Vercel project settings, add all variables from your `.env` file.
+    *   **Crucial**: Set `NEXT_PUBLIC_REALTIME_PROVIDER="supabase"`.
+4.  **Deploy**: Vercel will automatically build and deploy your app.
+5.  **Miro/Jira Update**: Update your Miro App URL and Jira Callback URL to your new Vercel domain (e.g., `https://your-app.vercel.app`).
+
+### Option B: Railway/Render (Recommended with Socket.io)
+If you prefer to use your own Socket.io server:
+1.  Connect your repository.
+2.  Set the **Build Command**: `npm run build`
+3.  Set the **Start Command**: `npm run start`
+4.  Set `NEXT_PUBLIC_REALTIME_PROVIDER="socketio"`.
+
+---
+
+## 🏗️ Build & Run (Local)
 ```bash
 # Install dependencies
 npm install
 
 # Run in Development mode
 npm run dev
-
-# Build and Run in Production mode
-npm run build
-npm run start
 ```
 
 ---
 
 > [!IMPORTANT]
-> **Security Note:** Ensure `JIRA_CLIENT_SECRET` is only stored in your server-side `.env` and never committed to version control. The project is already configured with `.gitignore` to prevent this.
+> **Security Note:** Ensure `JIRA_CLIENT_SECRET` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` are configured in your deployment platform's dashboard and never committed to version control.
