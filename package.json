@@ -1,0 +1,29 @@
+{
+  "name": "plus-sprint-tools",
+  "version": "0.2.0",
+  "license": "MIT",
+  "scripts": {
+    "dev": "tsx watch server.ts",
+    "build": "next build",
+    "start": "NODE_ENV=production tsx server.ts"
+  },
+  "dependencies": {
+    "@mirohq/websdk-react-hooks": "^0.0.3",
+    "mirotone": "5",
+    "next": "^15.3.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "@mirohq/websdk-types": "latest",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.19.17",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "express": "^5.2.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,12 @@
+<svg width="100" height="100" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Rounded Square Background -->
+  <rect width="100" height="100" rx="20" fill="#4262FF"/>
+  
+  <!-- Plus Symbol -->
+  <path d="M25 50H55M40 35V65" stroke="white" stroke-width="10" stroke-linecap="round"/>
+  
+  <!-- Sprint Lines -->
+  <path d="M65 35H85L80 43H65V35Z" fill="white"/>
+  <path d="M62 47H82L77 55H62V47Z" fill="white"/>
+  <path d="M59 59H79L74 67H59V59Z" fill="white"/>
+</svg>

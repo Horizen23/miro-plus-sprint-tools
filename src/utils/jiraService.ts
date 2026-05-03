@@ -1,0 +1,318 @@
+export interface JiraConfig {
+  baseUrl?: string;
+  email?: string;
+  apiToken?: string;
+  clientId?: string;
+  clientSecret?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  cloudId?: string;
+  authType: 'basic' | 'oauth';
+}
+
+export interface JiraIssue {
+  id: string;
+  key: string;
+  fields: {
+    summary: string;
+    project: {
+      id: string;
+      key: string;
+    };
+    issuetype: {
+      id: string;
+      name: string;
+      subtask: boolean;
+    };
+  };
+}
+
+export class JiraService {
+  private config: JiraConfig;
+
+  constructor(config: JiraConfig) {
+    this.config = config;
+  }
+
+  private get authHeader() {
+    if (this.config.authType === 'oauth' && this.config.accessToken) {
+      return `Bearer ${this.config.accessToken}`;
+    }
+    const credentials = `${this.config.email}:${this.config.apiToken}`;
+    return `Basic ${btoa(credentials)}`;
+  }
+
+  private get apiBaseUrl() {
+    const apiBase = process.env.NEXT_PUBLIC_JIRA_API_BASE || "https://api.atlassian.com";
+    const apiVersion = process.env.NEXT_PUBLIC_JIRA_API_VERSION || "3";
+    
+    if (this.config.authType === 'oauth' && this.config.cloudId) {
+      return `${apiBase}/ex/jira/${this.config.cloudId}/rest/api/${apiVersion}`;
+    }
+    
+    let url = (this.config.baseUrl || "").replace(/\/$/, "");
+    const restPath = `/rest/api/${apiVersion}`;
+    if (!url.includes(restPath)) {
+      url += restPath;
+    }
+    return url;
+  }
+
+  async getAccessibleResources(token: string) {
+    const apiBase = process.env.NEXT_PUBLIC_JIRA_API_BASE || "https://api.atlassian.com";
+    const response = await fetch(`${apiBase}/oauth/token/accessible-resources`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+    });
+    if (!response.ok) throw new Error("Failed to fetch accessible resources");
+    return await response.json();
+  }
+
+  async refreshAccessToken() {
+    if (!this.config.refreshToken) throw new Error("No refresh token available");
+
+    const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
+    const response = await fetch(`${basePath}/api/jira/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        refresh_token: this.config.refreshToken,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to refresh access token");
+    }
+
+    return await response.json();
+  }
+
+  async testConnection() {
+    const response = await fetch(`${this.apiBaseUrl}/myself`, {
+      headers: {
+        Authorization: this.authHeader,
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Connection failed: ${response.status} ${error}`);
+    }
+
+    return await response.json();
+  }
+
+  async getIssue(issueKey: string): Promise<JiraIssue> {
+    const response = await fetch(`${this.apiBaseUrl}/issue/${issueKey}`, {
+      headers: {
+        Authorization: this.authHeader,
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Failed to fetch issue ${issueKey}: ${response.status} ${error}`);
+    }
+
+    return await response.json();
+  }
+
+  async getProjectIssueTypes(projectId: string) {
+    // Note: This endpoint might vary depending on Jira version, but /issuetype/project is standard for Cloud
+    const response = await fetch(`${this.apiBaseUrl}/issuetype/project?projectId=${projectId}`, {
+      headers: {
+        Authorization: this.authHeader,
+        Accept: "application/json",
+      },
+    });
+    if (!response.ok) throw new Error(`Failed to fetch project issue types: ${response.status}`);
+    return await response.json();
+  }
+
+  async searchIssues(query: string): Promise<any[]> {
+    if (!query || query.length < 2) return [];
+    
+    // Using Issue Picker API for better search/autocomplete experience
+    const response = await fetch(`${this.apiBaseUrl.replace('/rest/api/3', '/rest/api/3/issue/picker')}?query=${encodeURIComponent(query)}&currentJql=`, {
+      headers: {
+        Authorization: this.authHeader,
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) throw new Error(`Search failed: ${response.status}`);
+    const data = await response.json();
+    
+    // Issue Picker returns sections (usually "History Search" and "Current Search")
+    const allIssues = data.sections.reduce((acc: any[], section: any) => {
+      return [...acc, ...section.issues];
+    }, []);
+    
+    return allIssues;
+  }
+
+  async getMyself() {
+    const response = await fetch(`${this.apiBaseUrl}/myself`, {
+      headers: {
+        Authorization: this.authHeader,
+        Accept: "application/json",
+      },
+    });
+    if (!response.ok) return null;
+    return await response.json();
+  }
+
+  async createSubtask(parentKey: string, summary: string, description?: string, dueDate?: string, startDate?: string, assigneeAccountId?: string) {
+    // 1. Get parent issue to find project
+    const parent = await this.getIssue(parentKey);
+    const projectId = parent.fields.project.id;
+
+    // 2. Find a valid subtask issue type for this project
+    const issueTypes = await this.getProjectIssueTypes(projectId);
+    const subtaskType = issueTypes.find((it: any) => it.subtask === true);
+
+    if (!subtaskType) {
+      throw new Error("Could not find a valid Sub-task issue type in this project.");
+    }
+
+    const fields: any = {
+      project: {
+        id: projectId,
+      },
+      parent: {
+        key: parentKey,
+      },
+      summary: summary,
+      issuetype: {
+        id: subtaskType.id, // Use ID instead of hardcoded name
+      },
+    };
+
+    if (description) {
+      fields.description = {
+        type: "doc",
+        version: 1,
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              {
+                type: "text",
+                text: description
+              }
+            ]
+          }
+        ]
+      };
+    }
+
+    if (dueDate) {
+      fields.duedate = dueDate.split('T')[0];
+    }
+    
+    if (startDate) {
+      const fieldId = process.env.JIRA_START_DATE_FIELD || "customfield_10015";
+      fields[fieldId] = startDate.split('T')[0];
+    }
+    
+    if (assigneeAccountId) {
+      fields.assignee = { accountId: assigneeAccountId };
+    }
+
+    // 3. Create subtask using the correct issue type ID
+    const response = await fetch(`${this.apiBaseUrl}/issue`, {
+      method: "POST",
+      headers: {
+        Authorization: this.authHeader,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        fields: fields,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Failed to create subtask: ${response.status} ${error}`);
+    }
+
+    return await response.json();
+  }
+
+  async updateIssue(issueKey: string, summary: string, dueDate?: string, startDate?: string, assigneeAccountId?: string) {
+    const fields: any = {
+      summary: summary,
+    };
+    
+    if (dueDate) {
+      fields.duedate = dueDate.split('T')[0];
+    }
+    
+    // Use configurable field ID for Start Date (default: customfield_10015)
+    if (startDate) {
+      const fieldId = process.env.JIRA_START_DATE_FIELD || "customfield_10015";
+      fields[fieldId] = startDate.split('T')[0];
+    }
+    
+    if (assigneeAccountId) {
+      fields.assignee = { accountId: assigneeAccountId };
+    }
+
+    const response = await fetch(`${this.apiBaseUrl}/issue/${issueKey}`, {
+      method: "PUT",
+      headers: {
+        Authorization: this.authHeader,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        fields: fields,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Failed to update issue ${issueKey}: ${response.status} ${error}`);
+    }
+
+    return true;
+  }
+
+  async getTransitions(issueKey: string): Promise<any[]> {
+    const response = await fetch(`${this.apiBaseUrl}/issue/${issueKey}/transitions`, {
+      headers: {
+        Authorization: this.authHeader,
+        Accept: "application/json",
+      },
+    });
+    if (!response.ok) throw new Error(`Failed to fetch transitions for ${issueKey}`);
+    const data = await response.json();
+    return data.transitions || [];
+  }
+
+  async transitionIssue(issueKey: string, transitionId: string) {
+    const response = await fetch(`${this.apiBaseUrl}/issue/${issueKey}/transitions`, {
+      method: "POST",
+      headers: {
+        Authorization: this.authHeader,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        transition: {
+          id: transitionId,
+        },
+      }),
+    });
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Failed to transition issue ${issueKey}: ${response.status} ${error}`);
+    }
+    return true;
+  }
+}
