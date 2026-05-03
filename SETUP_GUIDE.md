@@ -27,7 +27,23 @@ Complete setup guide for developers (Miro & Atlassian Integration)
 
 ---
 
-## 3. Environment Variables (`.env`)
+## 3. Supabase Setup (Optional for Serverless/Vercel)
+If you want to deploy on Vercel for free, use Supabase Realtime instead of Socket.io.
+
+1.  **Create Project**: Go to [Supabase Dashboard](https://supabase.com/dashboard) and create a new project.
+2.  **Enable Realtime**:
+    *   Go to **Project Settings** > **API** > **Realtime** (in the sidebar).
+    *   Ensure **Broadcast** is toggled **ON**.
+3.  **Get Keys**:
+    *   Go to **Project Settings** > **API**.
+    *   Copy the **Project URL** and **anon public key**.
+4.  **Configure .env**:
+    *   Set `NEXT_PUBLIC_REALTIME_PROVIDER="supabase"`
+    *   Fill in `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+
+---
+
+## 4. Environment Variables (`.env`)
 Create a `.env` file based on `.env.example` and configure these key variables:
 
 | Variable | Description |
@@ -37,6 +53,9 @@ Create a `.env` file based on `.env.example` and configure these key variables:
 | `NEXT_PUBLIC_JIRA_REDIRECT_URI` | Must match Atlassian Console exactly |
 | `NEXT_PUBLIC_BASE_URL` | Application root URL |
 | `NEXT_PUBLIC_DEFAULT_ESTIMATE_UNIT` | Initial unit (`pt` or `h`) |
+| `NEXT_PUBLIC_REALTIME_PROVIDER` | `socketio` or `supabase` |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase Project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase Anon Key |
 
 ---
 
