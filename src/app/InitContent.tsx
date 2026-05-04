@@ -89,18 +89,22 @@ export default function InitContent() {
                 }
 
                 const plainTitle = card.title.replace(/<[^>]*>/g, '');
+                console.log(`[JiraSync] [${metadata.key}] Updating fields (Dates/Assignee)...`);
                 await jiraWithRefresh(s => s.updateIssue(metadata.key!, plainTitle, card.dueDate, card.startDate, targetAssignee));
                 
                 // 2. Then Transition Status
                 if (transition) {
+                  console.log(`[JiraSync] [${metadata.key}] Transitioning to: ${transition.name} (id: ${transition.id})`);
                   await jiraWithRefresh(s => s.transitionIssue(metadata.key!, transition.id));
+                  console.log(`[JiraSync] [${metadata.key}] Transition success`);
                   await notify(`🚀 Jira: ${metadata.key} -> ${transition.name}`);
                 } else {
+                  console.warn(`[JiraSync] [${metadata.key}] No matching transition found for status: ${status}`);
                   await notify(`⚠️ Dates synced, but no '${status}' transition found in Jira`, 'info');
                 }
                 jiraUpdated = true;
              } catch (err: any) {
-                console.error("Jira Sync Error:", err);
+                console.error(`[JiraSync] [${metadata.key}] Sync Error:`, err.message);
                 if (!err.message?.includes("401")) {
                   await notify(`❌ Jira Sync Failed: ${err.message}`, 'error');
                 }
@@ -123,12 +127,17 @@ export default function InitContent() {
 
       // --- Register Custom Actions ---
       const handleSetStatus = (status: 'to-do' | 'in-progress' | 'done') => async (props: CustomEvent) => {
+        console.log(`[JiraSync] Action Triggered: ${status}`, { itemCount: props.items.length });
+        
         let userInfo: any = null;
         try { userInfo = await miro.board.getUserInfo(); } catch(e) {}
 
         const configKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_CONFIG_KEY || "jira-config-v2";
         const savedConfig = localStorage.getItem(configKey);
-        if (!savedConfig) return;
+        if (!savedConfig) {
+          console.warn("[JiraSync] No saved config found in localStorage");
+          return;
+        }
         
         let jiraConfig = JSON.parse(savedConfig);
 
@@ -137,10 +146,13 @@ export default function InitContent() {
           try {
             return await fn(service);
           } catch (e: any) {
+            console.log("[JiraSync] withRefresh caught error:", e.message);
+            
             // Make the 401 check more lenient
             const is401 = e.message?.includes("401") || e.status === 401;
             
             if (is401 && jiraConfig.refreshToken) {
+              console.log("[JiraSync] Attempting token refresh...");
               try {
                 const refreshData = await service.refreshAccessToken();
                 jiraConfig = { 
@@ -149,10 +161,11 @@ export default function InitContent() {
                   refreshToken: refreshData.refresh_token || jiraConfig.refreshToken 
                 };
                 localStorage.setItem(configKey, JSON.stringify(jiraConfig));
+                console.log("[JiraSync] Refresh success, retrying action...");
                 const nextService = new JiraService(jiraConfig);
                 return await fn(nextService);
               } catch (refreshError) { 
-                console.error("Token refresh failed:", refreshError);
+                console.error("[JiraSync] Refresh failed:", refreshError);
                 await notify("❌ Jira session expired. Please open the app panel to re-login.", "error");
                 throw refreshError; 
               }
@@ -167,33 +180,43 @@ export default function InitContent() {
         
         try {
           await notify("🔍 Initializing Jira Sync...", "info");
+          console.log("[JiraSync] Fetching global configuration...");
           
-          // Get config once
           const gConfig = await (miro.board as any).getAppData("globalConfig") || await (miro.board as any).getAppData("timesheetConfig");
           globalMapping = parseUserMapping(gConfig?.tsUserMapping || gConfig?.userMapping || "");
+          console.log("[JiraSync] Mapping loaded:", globalMapping);
           
-          // Try to get my account ID, but don't block if it fails
+          console.log("[JiraSync] Fetching my profile...");
           const myself = await withRefresh(s => s.getMyself()).catch(e => {
-            console.warn("Could not fetch Jira profile:", e);
+            console.warn("[JiraSync] Could not fetch Jira profile:", e.message);
             return null;
           });
-          if (myself) myAccountId = myself.accountId;
+          if (myself) {
+            myAccountId = myself.accountId;
+            console.log("[JiraSync] My Account ID:", myAccountId);
+          }
         } catch(e) {
-          console.warn("Pre-fetch failed, proceeding with defaults:", e);
+          console.warn("[JiraSync] Pre-fetch failed:", e);
         }
 
         let processedCount = 0;
-        const total = props.items.filter(i => i.type === 'card').length;
+        const cards = props.items.filter(i => i.type === 'card');
+        console.log(`[JiraSync] Starting loop for ${cards.length} cards`);
         
-        for (const item of props.items) {
-          if (item.type === 'card' && item.id) {
-            const success = await updateCardStatus(item as Card, status, withRefresh, userInfo, myAccountId, globalMapping);
-            if (success) processedCount++;
+        for (const item of cards) {
+          console.log(`[JiraSync] Updating card: ${item.id}`);
+          const success = await updateCardStatus(item as Card, status, withRefresh, userInfo, myAccountId, globalMapping);
+          if (success) {
+            processedCount++;
+            console.log(`[JiraSync] Card ${item.id} success`);
+          } else {
+            console.warn(`[JiraSync] Card ${item.id} failed`);
           }
         }
         
         if (processedCount > 0) {
-          await notify(`✅ Successfully updated ${processedCount}/${total} item(s)`, "info");
+          console.log(`[JiraSync] Batch complete: ${processedCount}/${cards.length}`);
+          await notify(`✅ Successfully updated ${processedCount}/${cards.length} item(s)`, "info");
         }
       };
 
