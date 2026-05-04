@@ -109,7 +109,11 @@ export default function InitContent() {
                   await notify(`❌ Jira Sync Failed: ${err.message}`, 'error');
                 }
              }
+          } else {
+             console.log(`[JiraSync] Skipping Jira update for card ${card.id}: No Jira metadata (key) found.`);
           }
+        } else {
+          console.log(`[JiraSync] Skipping Jira update for card ${card.id}: Jira auth not initialized.`);
         }
 
         // --- Miro Card Update ---
