@@ -154,9 +154,6 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
             try {
               const re = new RegExp(regexStr, 'i');
               for (const t of cardTags) {
-                // Ignore jira metadata tags for variable extraction
-                if (t.toLowerCase().startsWith('jira-')) continue;
-
                 const m = t.match(re);
                 if (m) {
                   vars[name] = m[1] || m[0];
