@@ -50,7 +50,7 @@ export default function InitContent() {
           const hasMapping = !!mappedUserIdentity;
           
           if (!hasFormalAssignee && !hasMapping) {
-            await notify(`❌ Cannot move to In Progress: No Assignee or Tag Mapping found!`, 'error');
+            await notify(`Cannot move to In Progress: No Assignee or Tag Mapping found!`, 'error');
             return false;
           }
           if (!card.startDate) card.startDate = today;
@@ -91,17 +91,17 @@ export default function InitContent() {
                   // 1. Update Issue Fields (Dates, Assignee) FIRST
                   try {
                     const plainTitle = card.title.replace(/<[^>]*>/g, '');
-                    console.log(`[JiraSync] [${metadata.key}] Updating fields (Dates/Assignee)...`);
+
                     await jiraWithRefresh(s => s.updateIssue(metadata.key!, plainTitle, card.dueDate, card.startDate, targetAssignee));
                   } catch (e: any) {
                     console.error(`[JiraSync] [${metadata.key}] Field update failed:`, e.message);
                   }
 
                   // 2. Then Transition Status
-                  console.log(`[JiraSync] [${metadata.key}] Transitioning to: ${transition.name} (id: ${transition.id})`);
+
                   await jiraWithRefresh(s => s.transitionIssue(metadata.key!, transition.id));
-                  console.log(`[JiraSync] [${metadata.key}] Transition success`);
-                  await notify(`🚀 Jira: ${metadata.key} -> ${transition.name}`);
+
+                  await notify(`Jira: ${metadata.key} -> ${transition.name}`);
                   jiraUpdated = true;
                 } else {
                   console.warn(`[JiraSync] [${metadata.key}] No matching transition found for status: ${status}`);
@@ -109,7 +109,7 @@ export default function InitContent() {
                   try {
                     const plainTitle = card.title.replace(/<[^>]*>/g, '');
                     await jiraWithRefresh(s => s.updateIssue(metadata.key!, plainTitle, card.dueDate, card.startDate, targetAssignee));
-                    await notify(`⚠️ Dates synced, but no '${status}' transition found`, 'info');
+                    await notify(`Dates synced, but no '${status}' transition found`, 'info');
                     jiraUpdated = true;
                   } catch (e: any) {
                     console.error(`[JiraSync] [${metadata.key}] Field update fallback failed:`, e.message);
@@ -118,14 +118,14 @@ export default function InitContent() {
              } catch (err: any) {
                 console.error(`[JiraSync] [${metadata.key}] Sync Error:`, err.message);
                 if (!err.message?.includes("401")) {
-                  await notify(`❌ Jira Sync Failed: ${err.message}`, 'error');
+                  await notify(`Jira Sync Failed: ${err.message}`, 'error');
                 }
              }
           } else {
-             console.log(`[JiraSync] Skipping Jira update for card ${card.id}: No Jira metadata (key) found.`);
+
           }
         } else {
-          console.log(`[JiraSync] Skipping Jira update for card ${card.id}: Jira auth not initialized.`);
+
         }
 
         // --- Miro Card Update ---
@@ -135,7 +135,7 @@ export default function InitContent() {
           return true;
         } catch (syncErr: any) {
           if (syncErr.message?.includes('Cannot move')) {
-             await notify(jiraUpdated ? `⚠️ Jira synced, but Miro card must be dragged manually.` : `❌ API limit: Kanban cards must be dragged manually!`, 'error');
+             await notify(jiraUpdated ? `Jira synced, but Miro card must be dragged manually.` : `API limit: Kanban cards must be dragged manually!`, 'error');
           }
           return false;
         }
@@ -143,7 +143,7 @@ export default function InitContent() {
 
       // --- Register Custom Actions ---
       const handleSetStatus = (status: 'to-do' | 'in-progress' | 'done') => async (props: CustomEvent) => {
-        console.log(`[JiraSync] Action Triggered: ${status}`, { itemCount: props.items.length });
+
         
         let userInfo: any = null;
         try { userInfo = await miro.board.getUserInfo(); } catch(e) {}
@@ -162,13 +162,13 @@ export default function InitContent() {
           try {
             return await fn(service);
           } catch (e: any) {
-            console.log("[JiraSync] withRefresh caught error:", e.message);
+
             
             // Make the 401 check more lenient
             const is401 = e.message?.includes("401") || e.status === 401;
             
             if (is401 && jiraConfig.refreshToken) {
-              console.log("[JiraSync] Attempting token refresh...");
+
               try {
                 const refreshData = await service.refreshAccessToken();
                 jiraConfig = { 
@@ -177,12 +177,12 @@ export default function InitContent() {
                   refreshToken: refreshData.refresh_token || jiraConfig.refreshToken 
                 };
                 localStorage.setItem(configKey, JSON.stringify(jiraConfig));
-                console.log("[JiraSync] Refresh success, retrying action...");
+
                 const nextService = new JiraService(jiraConfig);
                 return await fn(nextService);
               } catch (refreshError) { 
                 console.error("[JiraSync] Refresh failed:", refreshError);
-                await notify("❌ Jira session expired. Please open the app panel to re-login.", "error");
+                await notify("Jira session expired. Please open the app panel to re-login.", "error");
                 throw refreshError; 
               }
             }
@@ -195,21 +195,21 @@ export default function InitContent() {
         let globalMapping: any = {};
         
         try {
-          await notify("🔍 Initializing Jira Sync...", "info");
-          console.log("[JiraSync] Fetching global configuration...");
+          await notify("Initializing Jira Sync...", "info");
+
           
           const gConfig = await (miro.board as any).getAppData("globalConfig") || await (miro.board as any).getAppData("timesheetConfig");
           globalMapping = parseUserMapping(gConfig?.tsUserMapping || gConfig?.userMapping || "");
-          console.log("[JiraSync] Mapping loaded:", globalMapping);
+
           
-          console.log("[JiraSync] Fetching my profile...");
+
           const myself = await withRefresh(s => s.getMyself()).catch(e => {
             console.warn("[JiraSync] Could not fetch Jira profile:", e.message);
             return null;
           });
           if (myself) {
             myAccountId = myself.accountId;
-            console.log("[JiraSync] My Account ID:", myAccountId);
+
           }
         } catch(e) {
           console.warn("[JiraSync] Pre-fetch failed:", e);
@@ -217,22 +217,21 @@ export default function InitContent() {
 
         let processedCount = 0;
         const cards = props.items.filter(i => i.type === 'card');
-        console.log(`[JiraSync] Starting loop for ${cards.length} cards`);
+
         
         for (const item of cards) {
-          console.log(`[JiraSync] Updating card: ${item.id}`);
+
           const success = await updateCardStatus(item as Card, status, withRefresh, userInfo, myAccountId, globalMapping);
           if (success) {
             processedCount++;
-            console.log(`[JiraSync] Card ${item.id} success`);
-          } else {
+
             console.warn(`[JiraSync] Card ${item.id} failed`);
           }
         }
         
         if (processedCount > 0) {
-          console.log(`[JiraSync] Batch complete: ${processedCount}/${cards.length}`);
-          await notify(`✅ Successfully updated ${processedCount}/${cards.length} item(s)`, "info");
+
+          await notify(`Successfully updated ${processedCount}/${cards.length} item(s)`, "info");
         }
       };
 

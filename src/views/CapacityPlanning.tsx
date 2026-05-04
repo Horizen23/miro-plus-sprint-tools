@@ -115,7 +115,7 @@ export const CapacityPlanning: React.FC = () => {
               <tr>
                 <th className="name-header">
                   <span>Team</span>
-                  <button className="btn-reset-all" onClick={() => setTeamMembers(teamMembers.map(m => ({...m, attendance: Array(31).fill(1)})))} title="Reset All to Full">↺</button>
+                  <button className="btn-reset-all" onClick={() => setTeamMembers(teamMembers.map(m => ({...m, attendance: Array(31).fill(1)})))} title="Reset All to Full">Reset</button>
                 </th>
                 {sprintDates.map((date, i) => (
                   <th key={i}>

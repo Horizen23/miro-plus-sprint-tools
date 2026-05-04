@@ -79,7 +79,7 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
         try {
           const results = await withRefresh(s => s.searchIssues(searchQuery));
           setSearchResults(results);
-        } catch (e) { console.error(e); } finally { setIsSearching(false); }
+        } catch (e) { } finally { setIsSearching(false); }
       } else { setSearchResults([]); }
     }, 500);
     return () => clearTimeout(timer);
@@ -244,7 +244,7 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                   jiraAccountCache.set(mappedUser, accountId);
                   targetAssignee = accountId;
                 }
-              } catch (err) { console.warn(`Could not find Jira user for: ${mappedUser}`, err); }
+              } catch (err) { }
             }
           }
         }
@@ -451,9 +451,9 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                         fontWeight: (isSynced && hasChanged) || (!isSynced && !appParentKey && !c.detectedParentKey) ? 700 : 400
                       }}>
                         {isSynced ? (
-                          hasChanged ? `! Changed (${c.syncedKey})` : `✓ Up to date (${c.syncedKey})`
+                          hasChanged ? `! Changed (${c.syncedKey})` : `Up to date (${c.syncedKey})`
                         ) : (
-                          appParentKey ? `→ ${appParentKey}` : (c.detectedParentKey ? `Parent: ${c.detectedParentKey}` : '! No Parent Issue')
+                          appParentKey ? `${appParentKey}` : (c.detectedParentKey ? `Parent: ${c.detectedParentKey}` : '! No Parent Issue')
                         )}
                       </span>
                     );

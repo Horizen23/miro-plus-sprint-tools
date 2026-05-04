@@ -164,7 +164,7 @@ export async function handleRemoveLinks() {
         count++;
       }
     } catch (e) {
-      console.error("Failed to remove link", e);
+
     }
   }
 
@@ -234,7 +234,7 @@ export async function handleCreateRefinementFrame() {
           });
           allTags.push(testFrameTag as any);
         } catch (e) {
-          console.error('Failed to create Test-Frame tag', e);
+
         }
       }
 
@@ -331,10 +331,9 @@ export async function handleCreateRefinementFrame() {
           }
           cardIndex += 0.5;
         } catch (e) {
-          console.error('Failed to create refinement cards', e);
+
         }
       }
-
       newFrames.push(newFrame);
     } catch (error) {
       console.error(
@@ -362,7 +361,7 @@ export async function handleCreateSticky(texts: string[], parentFrameId?: string
         minY = targetFrame.y - targetFrame.height / 2;
       }
     } catch (e) {
-      console.warn("Failed to get parent frame", e);
+
     }
   }
 
@@ -414,7 +413,7 @@ export async function handleCreateSticky(texts: string[], parentFrameId?: string
         await targetFrame.add(sticky);
       }
     } catch (e) {
-      console.error("Failed to create sticky", e);
+
     }
   }
 
@@ -498,7 +497,7 @@ export const copyToClipboard = async (text: string): Promise<boolean> => {
       return true;
     }
   } catch (err) {
-    console.warn("Modern Clipboard API failed, attempting fallback", err);
+
   }
 
   // Fallback: execCommand('copy') with hidden textarea
@@ -522,7 +521,7 @@ export const copyToClipboard = async (text: string): Promise<boolean> => {
     
     if (successful) return true;
   } catch (err) {
-    console.error("Clipboard fallback failed", err);
+
   }
 
   return false;

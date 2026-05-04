@@ -77,7 +77,7 @@ export const VotingSession: React.FC<VotingSessionProps> = ({
                 <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '11px'}}>
                   <span style={{color: '#8c90b0', fontWeight: 600}}>VOTING PROGRESS</span>
                   <span style={{fontWeight: '800', color: isAllVoted ? '#34d399' : '#4262ff'}}>
-                    {isAllVoted ? '✨ EVERYONE READY' : `${votedCount} OF ${totalParticipants} VOTED`}
+                    {isAllVoted ? 'EVERYONE READY' : `${votedCount} OF ${totalParticipants} VOTED`}
                   </span>
                 </div>
                 <div className="voting-progress-bg" style={{ height: '8px', background: '#f1f5f9' }}>

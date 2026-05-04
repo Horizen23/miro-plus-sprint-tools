@@ -48,6 +48,7 @@ export function useVotingSession(
         setCurrentUserId(info.id);
         setCurrentUserName(info.name || `User ${info.id.slice(-4)}`);
       } catch (e) {
+
         console.error("Failed to fetch user info", e);
       }
     };
@@ -274,6 +275,7 @@ export function useVotingSession(
       }
     } catch (e) {
       console.error("Start voting failed", e);
+
       await miro.board.notifications.showError("Could not start voting");
     } finally {
       setIsProcessing(false);
@@ -329,6 +331,7 @@ export function useVotingSession(
       }
     } catch (e: any) {
       console.error("Cast vote failed", e);
+
       if (e.message?.includes("Metadata update failed")) {
         await miro.board.notifications.showError("Permission Denied: You need 'Edit' access to the board to vote.");
       } else {
@@ -419,6 +422,7 @@ export function useVotingSession(
       onFinished?.();
     } catch (e) {
       console.error("Apply vote failed", e);
+
       await miro.board.notifications.showError("Failed to apply results to the card.");
     } finally {
       setIsProcessing(false);

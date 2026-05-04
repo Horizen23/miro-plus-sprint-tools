@@ -95,7 +95,7 @@ export function useSprintSelection() {
       }
       await miro.board.notifications.showInfo(`Updated ${items.length} items`);
     } catch (e) {
-      console.error(e);
+
       await miro.board.notifications.showError("Failed to update points");
     } finally {
       setIsProcessing(false);
