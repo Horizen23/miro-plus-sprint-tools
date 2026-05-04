@@ -134,13 +134,41 @@ export async function handleDuplicateAndLink() {
     }
   }
 
-  // Final Selection
   if (newItems.length > 0) {
     try {
       await miro.board.deselect({ id: selection.map(s => s.id) });
       await miro.board.select({ id: newItems.map(n => n.id) });
     } catch (e) {}
   }
+}
+
+/**
+ * Removes all links (linkedTo) from selected cards.
+ */
+export async function handleRemoveLinks() {
+  const selection = await miro.board.getSelection();
+  const cards = selection.filter(i => i.type === 'card' || i.type === 'app_card');
+
+  if (cards.length === 0) {
+    await miro.board.notifications.showError("Please select at least one card to remove links");
+    return;
+  }
+
+  let count = 0;
+  for (const card of cards) {
+    try {
+      const item = card as any;
+      if (item.linkedTo) {
+        item.linkedTo = undefined;
+        await item.sync();
+        count++;
+      }
+    } catch (e) {
+      console.error("Failed to remove link", e);
+    }
+  }
+
+  await miro.board.notifications.showInfo(`Removed links from ${count} card(s)`);
 }
 
 export async function handleCreateRefinementFrame() {
@@ -393,4 +421,68 @@ export async function handleCreateSticky(texts: string[], parentFrameId?: string
   if (createdItems.length > 0) {
     await miro.board.viewport.zoomTo(createdItems);
   }
+}
+
+/**
+ * Reorders selected cards vertically based on their sequence logic.
+ */
+export async function handleReorderSelectedCards() {
+  const selection = await miro.board.getSelection();
+  const cards = selection.filter(i => i.type === 'card' || i.type === 'app_card');
+  
+  if (cards.length === 0) {
+    await miro.board.notifications.showError("Please select at least one card to reorder");
+    return;
+  }
+
+  // 1. Parse and Sort
+  const { parseCardTitle, compareSequences } = await import('./estimationUtils');
+  
+  const sortedCards = [...cards].sort((a, b) => {
+    const dataA = parseCardTitle((a as any).title || "");
+    const dataB = parseCardTitle((b as any).title || "");
+    return compareSequences(dataA.seq, dataB.seq);
+  });
+
+  // 2. Position Alignment
+  // Find the global left-most edge to use as alignment anchor
+  let minLeft = Infinity;
+  let minY = Infinity;
+  
+  cards.forEach(c => {
+    const item = c as any;
+    const w = item.width || 0;
+    const h = item.height || 0;
+    const left = item.x - w / 2;
+    const top = item.y - h / 2;
+    
+    if (left < minLeft) minLeft = left;
+    if (top < minY) minY = top;
+  });
+
+  // Fallback if no valid positions found
+  if (minLeft === Infinity) minLeft = 0;
+  if (minY === Infinity) minY = 0;
+
+  let currentY = minY;
+  const margin = 20; // Fixed gap between cards
+
+  for (let i = 0; i < sortedCards.length; i++) {
+    const card = sortedCards[i] as any;
+    const cardWidth = card.width || 200;
+    const cardHeight = card.height || 120;
+    
+    // Align left edge to minLeft
+    card.x = minLeft + (cardWidth / 2);
+    card.y = currentY + (cardHeight / 2);
+    await card.sync();
+    
+    currentY += cardHeight + margin;
+  }
+
+  const truncated = `Reordered ${sortedCards.length} cards by sequence`.length > 80 
+    ? `Reordered ${sortedCards.length} cards by sequence`.substring(0, 77) + "..." 
+    : `Reordered ${sortedCards.length} cards by sequence`;
+    
+  await miro.board.notifications.showInfo(truncated);
 }

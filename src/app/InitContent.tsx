@@ -6,6 +6,7 @@ import { RealtimeFactory } from '@/services/realtime/factory';
 import { VotingState } from '@/services/realtime/types';
 import { VotingSession } from '@/hooks/useVotingSession';
 import { JiraService } from '@/utils/jiraService';
+import { handleReorderSelectedCards, handleDuplicateAndLink, handleRemoveLinks } from '@/utils/miroUtils';
 
 export default function InitContent() {
   useEffect(() => {
@@ -27,14 +28,68 @@ export default function InitContent() {
       };
 
       // --- Register Custom Actions ---
-      const handleSetStatus = (status: 'to-do' | 'in-progress' | 'done') => async (props: CustomEvent) => {
+      const updateCardStatus = async (card: Card, status: 'to-do' | 'in-progress' | 'done', jiraService: JiraService | null, currentMiroUserId: string, myAccountId?: string) => {
         const today = new Date().toISOString().split('T')[0];
         
-        let currentMiroUserId = "";
+        if (status === 'in-progress') {
+          if (!card.assignee?.userId) {
+            await notify(`❌ Cannot move "${card.title.replace(/<[^>]*>/g, '').substring(0, 10)}..." to In Progress: No Assignee!`, 'error');
+            return false;
+          }
+          if (!card.startDate) card.startDate = today;
+        } else if (status === 'done') {
+          if (!card.startDate) card.startDate = today;
+          if (!card.dueDate) card.dueDate = today;
+        }
+        
+        // --- Jira Sync Logic ---
+        let jiraUpdated = false;
+        if (jiraService) {
+          const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
+          const metadata = (await card.getMetadata(metadataKey)) as { key?: string; lastTitle?: string } | undefined;
+          if (metadata && metadata.key) {
+             const transitions = await jiraService.getTransitions(metadata.key);
+             
+             let targetRegex = /none/;
+             if (status === 'in-progress') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_IN_PROGRESS || "progress|doing|dev", "i");
+             else if (status === 'done') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_DONE || "done|complete|resolved", "i");
+             else if (status === 'to-do') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_TODO || "to\\s*do|backlog|open", "i");
+
+             const transition = transitions.find((t: { id: string; name: string }) => targetRegex.test(t.name));
+             if (transition) {
+                await jiraService.transitionIssue(metadata.key, transition.id);
+                try {
+                  const targetAssignee = card.assignee?.userId === currentMiroUserId ? myAccountId : undefined;
+                  const plainTitle = card.title.replace(/<[^>]*>/g, '');
+                  await jiraService.updateIssue(metadata.key, plainTitle, card.dueDate, card.startDate, targetAssignee);
+                } catch (updateErr) {
+                  console.warn("Status updated but failed to sync dates/assignee", updateErr);
+                }
+                await notify(`🚀 Jira: ${metadata.key} -> ${transition.name}`);
+                jiraUpdated = true;
+             } else {
+                await notify(`❌ Jira: No transition for ${status}`, 'error');
+             }
+          }
+        }
+
+        // --- Miro Card Update ---
+        card.taskStatus = status;
         try {
-           const userInfo = await miro.board.getUserInfo();
-           currentMiroUserId = userInfo.id;
-        } catch(e) {}
+          await card.sync();
+          return true;
+        } catch (syncErr: any) {
+          if (syncErr.message?.includes('Cannot move')) {
+             await notify(jiraUpdated ? `⚠️ Jira synced, but Miro card must be dragged manually.` : `❌ API limit: Kanban cards must be dragged manually!`, 'error');
+          }
+          return false;
+        }
+      };
+
+      // --- Register Custom Actions ---
+      const handleSetStatus = (status: 'to-do' | 'in-progress' | 'done') => async (props: CustomEvent) => {
+        let currentMiroUserId = "";
+        try { const userInfo = await miro.board.getUserInfo(); currentMiroUserId = userInfo.id; } catch(e) {}
 
         let jiraService: JiraService | null = null;
         let myAccountId: string | undefined;
@@ -45,96 +100,20 @@ export default function InitContent() {
              const config = JSON.parse(savedConfig);
              if (config.accessToken || config.apiToken) {
                jiraService = new JiraService(config);
-               try {
-                 const myself = await jiraService.getMyself();
-                 if (myself) myAccountId = myself.accountId;
-               } catch(e) {}
+               const myself = await jiraService.getMyself();
+               if (myself) myAccountId = myself.accountId;
              }
           }
-        } catch(e) {
-          console.warn("Could not load Jira config in background", e);
-        }
+        } catch(e) {}
 
         let processedCount = 0;
         for (const item of props.items) {
           if (item.type === 'card' && item.id) {
-            try {
-              const card = item as Card;
-              
-              if (status === 'in-progress') {
-                if (!card.assignee?.userId) {
-                  await notify(`❌ Cannot move "${card.title.replace(/<[^>]*>/g, '').substring(0, 10)}..." to In Progress: No Assignee!`, 'error');
-                  continue; // Skip this card
-                }
-                if (!card.startDate) card.startDate = today;
-              } else if (status === 'done') {
-                if (!card.startDate) card.startDate = today;
-                if (!card.dueDate) card.dueDate = today;
-              }
-              
-              // --- Jira Sync Logic ---
-              let jiraUpdated = false;
-              if (jiraService) {
-                const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
-                const metadata = (await card.getMetadata(metadataKey)) as { key?: string; lastTitle?: string } | undefined;
-                if (metadata && metadata.key) {
-                   const transitions = await jiraService.getTransitions(metadata.key);
-                   
-                   let targetRegex = /none/;
-                   if (status === 'in-progress') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_IN_PROGRESS || "progress|doing|dev", "i");
-                   else if (status === 'done') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_DONE || "done|complete|resolved", "i");
-                   else if (status === 'to-do') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_TODO || "to\\s*do|backlog|open", "i");
-
-                   const transition = transitions.find((t: { id: string; name: string }) => targetRegex.test(t.name));
-                   if (transition) {
-                      await jiraService.transitionIssue(metadata.key, transition.id);
-                      
-                      // Push dates and assignee update to Jira
-                      try {
-                        const targetAssignee = card.assignee?.userId === currentMiroUserId ? myAccountId : undefined;
-                        const plainTitle = card.title.replace(/<[^>]*>/g, '');
-                        await jiraService.updateIssue(metadata.key, plainTitle, card.dueDate, card.startDate, targetAssignee);
-                      } catch (updateErr) {
-                        console.warn("Status updated but failed to sync dates/assignee", updateErr);
-                      }
-
-                      await notify(`🚀 Jira: ${metadata.key} moved to ${transition.name}!`);
-                      jiraUpdated = true;
-                   } else {
-                      console.warn(`No matching transition found for ${status} in Jira`, transitions);
-                      await notify(`❌ Jira: Could not move ${metadata.key}. Check valid transitions.`, 'error');
-                   }
-                }
-              }
-
-              // --- Miro Card Update ---
-              card.taskStatus = status;
-              
-              try {
-                await card.sync();
-              } catch (syncErr: any) {
-                console.warn("Miro SDK sync error:", syncErr.message);
-                if (syncErr.message?.includes('Cannot move')) {
-                   if (jiraUpdated) {
-                     await notify(`⚠️ Jira synced, but Miro card must be dragged manually due to API limits.`, 'error');
-                   } else {
-                     await notify(`❌ API limit: Kanban cards must be dragged manually!`, 'error');
-                   }
-                } else {
-                   throw syncErr;
-                }
-              }
-              
-              processedCount++;
-            } catch (e) {
-              console.error("Failed to update card", e);
-            }
+            const success = await updateCardStatus(item as Card, status, jiraService, currentMiroUserId, myAccountId);
+            if (success) processedCount++;
           }
         }
-        
-        if (processedCount > 0) {
-          await notify(`✅ Marked ${processedCount} item(s) as ${status.toUpperCase()}`);
-        }
+        if (processedCount > 0) await notify(`✅ Marked ${processedCount} item(s) as ${status.toUpperCase()}`);
       };
 
       await miro.board.ui.on('custom:set-todo', handleSetStatus('to-do'));

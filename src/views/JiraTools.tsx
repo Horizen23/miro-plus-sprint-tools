@@ -97,7 +97,7 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
       
       const items: SelectedCard[] = [];
       for (const item of selection) {
-        if (item.type !== 'card' && item.type !== 'sticky_note') continue;
+        if (item.type !== 'card' && item.type !== 'app_card') continue;
         
         const itemAny = item as any;
         const itemTags = tags.filter(t => itemAny.tagIds?.includes(t.id));

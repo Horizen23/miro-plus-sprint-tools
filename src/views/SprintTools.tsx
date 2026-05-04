@@ -17,6 +17,8 @@ interface SprintToolsProps {
   handleStartVoting: () => void;
   handleCreateRefinementFrame: () => Promise<any>;
   handleDuplicateAndLink: () => Promise<any>;
+  handleRemoveLinks: () => Promise<any>;
+  handleReorderSelectedCards: () => Promise<any>;
   showGuide: boolean;
   setShowGuide: (show: boolean) => void;
   handleSelectAll: () => void;
@@ -43,6 +45,8 @@ export const SprintTools: React.FC<SprintToolsProps> = ({
   handleStartVoting,
   handleCreateRefinementFrame,
   handleDuplicateAndLink,
+  handleRemoveLinks,
+  handleReorderSelectedCards,
   showGuide,
   setShowGuide,
   handleSelectAll,
@@ -91,6 +95,8 @@ export const SprintTools: React.FC<SprintToolsProps> = ({
           handleAction={handleAction}
           handleCreateRefinementFrame={handleCreateRefinementFrame}
           handleDuplicateAndLink={handleDuplicateAndLink}
+          handleRemoveLinks={handleRemoveLinks}
+          handleReorderSelectedCards={handleReorderSelectedCards}
           isProcessing={isProcessing}
           itemCount={summary.count}
           showGuide={showGuide}

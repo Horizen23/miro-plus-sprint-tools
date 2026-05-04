@@ -9,6 +9,8 @@ interface SprintActionsProps {
   handleAction: (fn: () => Promise<any>) => void;
   handleCreateRefinementFrame: () => Promise<any>;
   handleDuplicateAndLink: () => Promise<any>;
+  handleRemoveLinks: () => Promise<any>;
+  handleReorderSelectedCards: () => Promise<any>;
   isProcessing: boolean;
   itemCount: number;
   showGuide: boolean;
@@ -25,6 +27,8 @@ export const SprintActions: React.FC<SprintActionsProps> = ({
   handleAction,
   handleCreateRefinementFrame,
   handleDuplicateAndLink,
+  handleRemoveLinks,
+  handleReorderSelectedCards,
   isProcessing,
   itemCount,
   showGuide,
@@ -92,20 +96,57 @@ export const SprintActions: React.FC<SprintActionsProps> = ({
         </Button>
       </div>
       
+      <div style={{display: 'flex', gap: '8px', marginTop: '8px'}}>
+        <Button 
+          loading={isProcessing}
+          onClick={() => handleAction(handleDuplicateAndLink)}
+          fullWidth
+          disabled={itemCount === 0}
+          icon={(
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          )}
+        >
+          Duplicate & Link 
+        </Button>
+
+        <Button 
+          variant="secondary"
+          loading={isProcessing}
+          onClick={() => handleAction(handleRemoveLinks)}
+          fullWidth
+          disabled={itemCount === 0}
+          icon={(
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+              <line x1="8" y1="16" x2="16" y2="8"></line>
+            </svg>
+          )}
+        >
+          Unlink
+        </Button>
+      </div>
+
       <Button 
+        variant="secondary"
         loading={isProcessing}
-        onClick={() => handleAction(handleDuplicateAndLink)}
+        onClick={() => handleAction(handleReorderSelectedCards)}
         fullWidth
         style={{marginTop: '8px'}}
         disabled={itemCount === 0}
         icon={(
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            <path d="m21 16-4 4-4-4"></path>
+            <path d="M17 20V4"></path>
+            <path d="m3 8 4-4 4 4"></path>
+            <path d="M7 4v16"></path>
           </svg>
         )}
       >
-        Duplicate & Link 
+        Reorder by Sequence
       </Button>
 
       <div className="reference-guide">

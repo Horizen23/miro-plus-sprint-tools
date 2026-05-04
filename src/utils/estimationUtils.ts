@@ -115,6 +115,59 @@ export const parseCardTitle = (title: string): CardTitleData => {
 };
 
 /**
+ * Compares two sequences based on the requested priority:
+ * 1. Dev tasks (with sequence, no 'T' prefix)
+ * 2. No sequence / Empty brackets
+ * 3. Test tasks (starting with 'T')
+ */
+export const compareSequences = (seqA: string | null, seqB: string | null): number => {
+  const getCategory = (s: string | null) => {
+    if (!s || s.trim() === "") return 2; // No Seq / Empty
+    if (s.toUpperCase().startsWith('T')) return 3; // Test
+    return 1; // Dev
+  };
+
+  const catA = getCategory(seqA);
+  const catB = getCategory(seqB);
+
+  if (catA !== catB) return catA - catB;
+
+  // If same category, compare the actual string content
+  const a = (seqA || "").toUpperCase();
+  const b = (seqB || "").toUpperCase();
+  
+  // Natural sort for strings like A1.0, A1.10
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+};
+
+/**
+ * Increments a sequence string (e.g., A1.0 -> A1.1, A1.9 -> A1.10)
+ */
+export const incrementSequence = (seq: string | null): string => {
+  if (!seq || seq.trim() === "") return "A1.0";
+
+  // Regex to match Prefix, Major number, and optional Minor number
+  // Example: TA1.0 -> Group 1: TA, Group 2: 1, Group 3: 0
+  const pattern = /^([A-Za-z]*)(\d+)(?:\.(\d+))?$/;
+  const match = seq.match(pattern);
+
+  if (!match) return seq; // Fallback if no numbers found
+
+  const prefix = match[1] || "";
+  const major = parseInt(match[2], 10);
+  const minorStr = match[3];
+
+  if (minorStr !== undefined) {
+    // If there's a minor version (e.g., .0), increment it
+    const minor = parseInt(minorStr, 10);
+    return `${prefix}${major}.${minor + 1}`;
+  } else {
+    // If only major version (e.g., A1), increment major
+    return `${prefix}${major + 1}`;
+  }
+};
+
+/**
  * Formats components into a standardized card title.
  */
 export const formatCardTitle = (data: CardTitleData): string => {

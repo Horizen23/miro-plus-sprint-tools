@@ -10,6 +10,8 @@ import {
   handleDuplicateAndLink,
   handleCreateRefinementFrame,
   handleCreateSticky,
+  handleRemoveLinks,
+  handleReorderSelectedCards,
 } from '@/utils/miroUtils';
 import {
   handleSelectAll,
@@ -153,6 +155,8 @@ const AppPanel: React.FC = () => {
         handleStartVoting={handleStartVoting}
         handleCreateRefinementFrame={handleCreateRefinementFrame}
         handleDuplicateAndLink={handleDuplicateAndLink}
+        handleRemoveLinks={handleRemoveLinks}
+        handleReorderSelectedCards={handleReorderSelectedCards}
         showGuide={showGuide}
         setShowGuide={setShowGuide}
         handleSelectAll={handleSelectAll}
