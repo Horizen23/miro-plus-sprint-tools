@@ -322,79 +322,75 @@ export async function handleCreateRefinementFrame() {
   }
 }
 
-export async function handleCreateSticky(texts: string[]) {
-  const selection = await miro.board.getSelection();
-  if (selection.length === 0) return;
+export async function handleCreateSticky(texts: string[], parentFrameId?: string) {
+  let minX = 0, minY = 0, targetFrame: any = null;
 
-  let minX = Infinity, minY = Infinity;
-  let foundFrame = false;
-
-  // 1. Try to find a frame in the selection
-  const frames = selection.filter(i => i.type === 'frame');
-  if (frames.length > 0) {
-    const f = frames[0] as any;
-    minX = f.x - f.width / 2;
-    minY = f.y - f.height / 2;
-    foundFrame = true;
-  }
-
-  // 2. If no frame selected, check if items are inside a frame
-  if (!foundFrame) {
-    for (const item of selection) {
-      if ((item as any).parentId) {
-        try {
-          const parent = await miro.board.getById((item as any).parentId);
-          if (parent && parent.type === 'frame') {
-            const f = parent as any;
-            minX = f.x - f.width / 2;
-            minY = f.y - f.height / 2;
-            foundFrame = true;
-            break;
-          }
-        } catch (e) {}
+  // 1. Resolve starting position and target frame
+  if (parentFrameId) {
+    try {
+      targetFrame = await miro.board.getById(parentFrameId);
+      if (targetFrame && targetFrame.type === 'frame') {
+        minX = targetFrame.x - targetFrame.width / 2;
+        minY = targetFrame.y - targetFrame.height / 2;
       }
+    } catch (e) {
+      console.warn("Failed to get parent frame", e);
     }
   }
 
-  // 3. Fallback to selection bounds (always calculate these to get center)
-  let maxX = -Infinity, maxY = -Infinity;
-  for (const item of selection) {
-    const itemAny = item as any;
-    const w = itemAny.width || 0;
-    const h = itemAny.height || 0;
-    const left = itemAny.x - w / 2;
-    const right = itemAny.x + w / 2;
-    const top = itemAny.y - h / 2;
-    const bottom = itemAny.y + h / 2;
-    if (left < minX) minX = left;
-    if (right > maxX) maxX = right;
-    if (top < minY) minY = top;
-    if (bottom > maxY) maxY = bottom;
+  // Fallback to selection or viewport if no parent frame provided or found
+  if (!targetFrame) {
+    const selection = await miro.board.getSelection();
+    if (selection.length > 0) {
+      const first = selection[0] as any;
+      minX = first.x;
+      minY = first.y;
+      // If the selected item has a parent frame, let's use that
+      if (first.parentId) {
+        try {
+          const parent = await miro.board.getById(first.parentId);
+          if (parent && parent.type === 'frame') {
+            targetFrame = parent;
+            minX = targetFrame.x - targetFrame.width / 2;
+            minY = targetFrame.y - targetFrame.height / 2;
+          }
+        } catch (e) {}
+      }
+    } else {
+      const viewport = await miro.board.viewport.get();
+      minX = viewport.x;
+      minY = viewport.y;
+    }
   }
 
-  const height = maxY - minY;
-  const centerY = minY + height / 2;
-
   const createdItems = [];
+  const startX = targetFrame ? minX + 50 : minX;
+  const startY = targetFrame ? minY + 50 : minY;
+
   for (let i = 0; i < texts.length; i++) {
     try {
-      const sticky = await (miro.board as any).createStickyNote({
+      const sticky = await miro.board.createStickyNote({
         content: texts[i],
-        x: minX - 220, // To the left of the frame
-        y: centerY - 100 + (i * 210), // Centered vertically, stacked
+        x: startX + (i * 220),
+        y: startY,
         style: {
-          fillColor: process.env.NEXT_PUBLIC_MIRO_STICKY_COLOR || 'black',
+          fillColor: (process.env.NEXT_PUBLIC_MIRO_STICKY_COLOR as any) || 'black',
           textAlign: 'center',
           textAlignVertical: 'middle'
         }
       });
+      
       createdItems.push(sticky);
+
+      if (targetFrame && targetFrame.add) {
+        await targetFrame.add(sticky);
+      }
     } catch (e) {
       console.error("Failed to create sticky", e);
     }
   }
 
   if (createdItems.length > 0) {
-    // await miro.board.viewport.zoomTo(createdItems);
+    await miro.board.viewport.zoomTo(createdItems);
   }
 }

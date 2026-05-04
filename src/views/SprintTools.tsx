@@ -11,7 +11,7 @@ interface SprintToolsProps {
   setEstimateUnit: (unit: 'pt' | 'h') => void;
   summary: any;
   handleAction: (fn: () => Promise<any>) => void;
-  handleCreateSticky: (notes: string[]) => Promise<any>;
+  handleCreateSticky: (notes: string[], parentFrameId?: string) => Promise<any>;
   handleSetPoints: (p: string) => void;
   isProcessing: boolean;
   handleStartVoting: () => void;

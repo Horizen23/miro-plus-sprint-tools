@@ -11,7 +11,7 @@ interface SelectionSummaryProps {
     actualHours: number;
   };
   handleAction: (fn: () => Promise<any>) => void;
-  handleCreateSticky: (notes: string[]) => Promise<any>;
+  handleCreateSticky: (notes: string[], parentFrameId?: string) => Promise<any>;
 }
 
 export const SelectionSummary: React.FC<SelectionSummaryProps> = ({
@@ -42,10 +42,12 @@ export const SelectionSummary: React.FC<SelectionSummaryProps> = ({
               <Button 
                 variant="icon" 
                 title="Create Black Sticky Notes for Points & Hours"
-                onClick={() => handleAction(() => {
+                onClick={() => handleAction(async () => {
+                  const selection = await miro.board.getSelection();
+                  const parentId = (selection[0] as any)?.parentId;
                   const notes = [`${summary.points}pt`];
                   if (summary.actualHours > 0) notes.push(`${summary.actualHours}h`);
-                  return handleCreateSticky(notes);
+                  return handleCreateSticky(notes, parentId);
                 })}
                 icon={(
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
