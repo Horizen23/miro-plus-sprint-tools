@@ -77,9 +77,6 @@ export default function InitContent() {
                 else if (status === 'done') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_DONE || "done|complete|resolved", "i");
                 else if (status === 'to-do') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_TODO || "to[\\s\\-]*do|backlog|open|new|ready|todo", "i");
 
-                const transition = transitions.find((t: { id: string; name: string }) => targetRegex.test(t.name));
-                
-                // 1. Update Issue Fields (Dates, Assignee) FIRST
                 let targetAssignee: string | undefined;
                 if (isMe || card.assignee?.userId === currentMiroUserId) {
                   targetAssignee = myAccountId;
@@ -88,21 +85,36 @@ export default function InitContent() {
                   if (foundUsers && foundUsers.length > 0) targetAssignee = foundUsers[0].accountId;
                 }
 
-                const plainTitle = card.title.replace(/<[^>]*>/g, '');
-                console.log(`[JiraSync] [${metadata.key}] Updating fields (Dates/Assignee)...`);
-                await jiraWithRefresh(s => s.updateIssue(metadata.key!, plainTitle, card.dueDate, card.startDate, targetAssignee));
+                const transition = transitions.find((t: { id: string; name: string }) => targetRegex.test(t.name));
                 
-                // 2. Then Transition Status
                 if (transition) {
+                  // 1. Update Issue Fields (Dates, Assignee) FIRST
+                  try {
+                    const plainTitle = card.title.replace(/<[^>]*>/g, '');
+                    console.log(`[JiraSync] [${metadata.key}] Updating fields (Dates/Assignee)...`);
+                    await jiraWithRefresh(s => s.updateIssue(metadata.key!, plainTitle, card.dueDate, card.startDate, targetAssignee));
+                  } catch (e: any) {
+                    console.error(`[JiraSync] [${metadata.key}] Field update failed:`, e.message);
+                  }
+
+                  // 2. Then Transition Status
                   console.log(`[JiraSync] [${metadata.key}] Transitioning to: ${transition.name} (id: ${transition.id})`);
                   await jiraWithRefresh(s => s.transitionIssue(metadata.key!, transition.id));
                   console.log(`[JiraSync] [${metadata.key}] Transition success`);
                   await notify(`🚀 Jira: ${metadata.key} -> ${transition.name}`);
+                  jiraUpdated = true;
                 } else {
                   console.warn(`[JiraSync] [${metadata.key}] No matching transition found for status: ${status}`);
-                  await notify(`⚠️ Dates synced, but no '${status}' transition found in Jira`, 'info');
+                  // Fallback: Just update fields if no transition is needed or found
+                  try {
+                    const plainTitle = card.title.replace(/<[^>]*>/g, '');
+                    await jiraWithRefresh(s => s.updateIssue(metadata.key!, plainTitle, card.dueDate, card.startDate, targetAssignee));
+                    await notify(`⚠️ Dates synced, but no '${status}' transition found`, 'info');
+                    jiraUpdated = true;
+                  } catch (e: any) {
+                    console.error(`[JiraSync] [${metadata.key}] Field update fallback failed:`, e.message);
+                  }
                 }
-                jiraUpdated = true;
              } catch (err: any) {
                 console.error(`[JiraSync] [${metadata.key}] Sync Error:`, err.message);
                 if (!err.message?.includes("401")) {
