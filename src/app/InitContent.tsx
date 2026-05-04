@@ -184,8 +184,11 @@ export default function InitContent() {
           console.log("InitContent: Opening voting modal for card:", state.cardId);
           activeModalCardId = state.cardId;
           
+          const displayTitle = state.cardTitle.length > 50 
+            ? state.cardTitle.substring(0, 47) + "..." 
+            : state.cardTitle;
           await miro.board.notifications.showInfo(
-            `Estimation Started: ${state.cardTitle}`
+            `Estimation Started: ${displayTitle}`
           );
 
           try {

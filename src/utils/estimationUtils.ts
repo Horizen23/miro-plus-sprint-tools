@@ -41,63 +41,127 @@ export const getBucketedPoint = (sum: number): number => {
   return sum > 0 ? scale[scale.length - 1] : 0;
 };
 
-export const handleSetPointsOnItem = async (item: Card | AppCard, points: string) => {
-  let currentTitle = (item.title || "").replace(/<[^>]*>/g, '');
-  const isHour = points.endsWith('h');
-  const rawValue = points.replace('h', '');
-  const pointsStr = points === '?' ? '?' : (isHour ? `[${rawValue}h]` : `[${rawValue}]`);
+export interface CardTitleData {
+  seq: string;
+  estimate: string;
+  cleanTitle: string;
+}
 
-  const bracketRegex = /^(\[\d+(?:\.\d+)?h?\]|\(\d+(?:\.\d+)?h?\))\s*/;
-  const plainNumRegex = /^(\d+(?:\.\d+)?h?)\s+/;
+/**
+ * Parses a card title into its components: sequence, estimate, and the actual title text.
+ * Pattern: [SEQ][EST] Title
+ */
+export const parseCardTitle = (title: string): CardTitleData => {
+  // Deep clean HTML and common entities
+  const rawTitle = (title || "")
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .trim();
+  
+  console.log(`[DEBUG] Parsing title: "${rawTitle}"`);
 
-  let newTitle = "";
-  if (bracketRegex.test(currentTitle)) {
-    newTitle = currentTitle.replace(bracketRegex, pointsStr + " ");
-  } else if (plainNumRegex.test(currentTitle)) {
-    newTitle = currentTitle.replace(plainNumRegex, pointsStr + " ");
-  } else {
-    newTitle = pointsStr + " " + currentTitle;
+  // Optimized pattern:
+  // - Group 1: Sequence (optional, can be empty [])
+  // - Group 2: Estimate (required bracket with numbers/h)
+  // - Group 3: Clean Title
+  const pattern = /^\s*(?:\[([A-Za-z\d.]*)\])?\s*\[(\d+(?:\.\d+)?h?)\]\s*(.*)$/;
+  const match = rawTitle.match(pattern);
+
+  if (match) {
+    const res = {
+      // If match[1] is undefined, the first bracket was missing.
+      // If it's a string (even empty), the bracket was present.
+      seq: match[1] === undefined ? (null as any) : match[1],
+      estimate: match[2] || "",
+      cleanTitle: match[3] || ""
+    };
+    console.log(`[DEBUG] Full Match:`, res);
+    return res;
   }
 
-  const newTitleFinal = newTitle.trim();
-  console.log(`[DEBUG] Attempting to update card ${item.id}`);
-  console.log(`[DEBUG] Old title: "${currentTitle}"`);
-  console.log(`[DEBUG] New title: "${newTitleFinal}"`);
+  // Fallback 1: Only one bracket (Assume it's estimate if it's numeric/h)
+  const singleBracketPattern = /^\s*\[(\d+(?:\.\d+)?h?)\]\s*(.*)$/;
+  const singleMatch = rawTitle.match(singleBracketPattern);
+  if (singleMatch) {
+    const res = {
+      seq: "",
+      estimate: singleMatch[1] || "",
+      cleanTitle: singleMatch[2] || ""
+    };
+    console.log(`[DEBUG] Estimate Only Match:`, res);
+    return res;
+  }
+
+  // Fallback 2: Sequence only (e.g. [A1.0] Task)
+  const seqOnlyPattern = /^\s*\[([A-Za-z]+\d+(?:\.\d+)?)\]\s*(.*)$/;
+  const seqMatch = rawTitle.match(seqOnlyPattern);
+  if (seqMatch) {
+    const res = {
+      seq: seqMatch[1] || "",
+      estimate: "",
+      cleanTitle: seqMatch[2] || ""
+    };
+    console.log(`[DEBUG] Seq Only Match:`, res);
+    return res;
+  }
+
+  const res = {
+    seq: "",
+    estimate: "",
+    cleanTitle: rawTitle
+  };
+  console.log(`[DEBUG] No Match fallback:`, res);
+  return res;
+};
+
+/**
+ * Formats components into a standardized card title.
+ */
+export const formatCardTitle = (data: CardTitleData): string => {
+  const seqPart = data.seq !== null ? `[${data.seq}]` : "";
+  const estPart = data.estimate ? `[${data.estimate}]` : "";
   
+  // Format as [SEQ][EST] Title
+  return `${seqPart}${estPart} ${data.cleanTitle}`.trim();
+};
+
+export const handleSetPointsOnItem = async (item: Card | AppCard, points: string) => {
+  const currentTitle = item.title || "";
+  const { seq, cleanTitle } = parseCardTitle(currentTitle);
+  
+  const newEstimate = points === '?' ? '?' : points;
+
+  const newTitleFinal = formatCardTitle({
+    seq: seq, 
+    estimate: newEstimate,
+    cleanTitle: cleanTitle
+  });
+  
+  console.log(`[DEBUG] handleSetPointsOnItem - Card: ${item.id}`);
+  console.log(`[DEBUG] Old Title: "${currentTitle}"`);
+  console.log(`[DEBUG] New Title: "${newTitleFinal}"`);
+
   try {
-    await miro.board.notifications.showInfo(`Updating card: ${newTitleFinal}`);
-    
-    // Re-fetch the item to ensure we have the freshest instance before syncing
     const freshItem = await miro.board.getById(item.id) as any;
     if (freshItem) {
-      console.log(`[DEBUG] Fresh item found. Current title on board: "${freshItem.title}"`);
       freshItem.title = newTitleFinal;
       await freshItem.sync();
-      console.log(`[DEBUG] Sync completed successfully for ${item.id}`);
-    } else {
-      console.error(`[DEBUG] Could not re-fetch card ${item.id}`);
-      item.title = newTitleFinal;
-      if (item.sync) await item.sync();
     }
   } catch (e) {
-    console.error("[DEBUG] Sync failed with error:", e);
-    await miro.board.notifications.showError(`Update failed: ${String(e)}`);
-    // Last resort fallback
-    item.title = newTitleFinal;
-    if (item.sync) await item.sync();
+    console.error("[DEBUG] Sync failed:", e);
   }
 };
 
 export const calculateSelectionSummary = (items: (Card | AppCard)[]) => {
   let actualPointsSum = 0;
   let actualHoursSum = 0;
-  const estRegex = /\[(\d+(?:\.\d+)?)(h?)\]|\((\d+(?:\.\d+)?)(h?)\)|^(\d+(?:\.\d+)?)(h?)\s/i;
 
   for (const item of items) {
     let itemEst = 0;
     let unit: 'pt' | 'h' = 'pt';
     let found = false;
 
+    // 1. Check App Card Fields first
     if (item.type === 'app_card' && (item as any).fields && (item as any).fields.length > 0) {
       (item as any).fields.forEach((field: any) => {
         if (field.value) {
@@ -111,27 +175,36 @@ export const calculateSelectionSummary = (items: (Card | AppCard)[]) => {
       });
     }
 
+    // 2. Check Title using central parser
     if (!found) {
-      const title = (item.title || "").replace(/<[^>]*>/g, '');
-      const match = title.match(estRegex);
-      if (match) {
-        const valStr = match[1] || match[3] || match[5];
-        const unitStr = match[2] || match[4] || match[6];
-        if (valStr) {
-          itemEst = parseFloat(valStr);
-          unit = unitStr?.toLowerCase() === 'h' ? 'h' : 'pt';
+      const { estimate } = parseCardTitle(item.title || "");
+      if (estimate) {
+        const valStr = estimate.replace('h', '');
+        itemEst = parseFloat(valStr);
+        if (!isNaN(itemEst)) {
+          unit = estimate.toLowerCase().includes('h') ? 'h' : 'pt';
+          found = true;
         }
       }
     }
     
-    if (unit === 'h') actualHoursSum += itemEst;
-    else actualPointsSum += itemEst;
+    if (found) {
+      console.log(`[DEBUG] Item ${item.id} found estimate: ${itemEst}${unit}`);
+      if (unit === 'h') actualHoursSum += itemEst;
+      else actualPointsSum += itemEst;
+    }
   }
 
   const pointsFromHours = mapHoursToPoints(actualHoursSum);
   const totalPointsRaw = actualPointsSum + pointsFromHours;
   const bucketedPoint = getBucketedPoint(totalPointsRaw);
   const hourRange = mapPointsToHours(bucketedPoint);
+
+  console.log(`[DEBUG] Summary Calculation:`);
+  console.log(`- Total Items: ${items.length}`);
+  console.log(`- Raw Hours Sum: ${actualHoursSum}`);
+  console.log(`- Raw Points Sum: ${actualPointsSum}`);
+  console.log(`- Total Points (incl. mapped hours): ${totalPointsRaw}`);
 
   return {
     count: items.length,

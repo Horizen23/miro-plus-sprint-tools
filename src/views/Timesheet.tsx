@@ -1,5 +1,6 @@
 import * as React from "react";
 import type { Card, AppCard } from "@mirohq/websdk-types";
+import { parseCardTitle } from "../utils/estimationUtils";
 import { SectionHeader } from "../components/SectionHeader";
 import { SummaryCard, SummaryDivider } from "../components/SummaryCard";
 import { Button } from "../components/Button";
@@ -26,9 +27,9 @@ const DEFAULT_CONFIG: TimesheetConfig = {
   defaultProject: process.env.NEXT_PUBLIC_TIMESHEET_DEFAULT_PROJECT || "PLUSOS",
   meetingTag: "meeting",
   meetingPattern: "[Meeting][Sprint] {title}",
-  taskTag: "jira-([\\d-]+)",
+  taskTag: "jira-(.+)",
   taskPattern: "[Task][{tag}] {title}",
-  variables: process.env.NEXT_PUBLIC_TIMESHEET_VARIABLES || "tag=jira-([\\d-]+)\nproject=(PLUSOS|SMARTEYES|EXIM)",
+  variables: process.env.NEXT_PUBLIC_TIMESHEET_VARIABLES || "tag=jira-(.+)\nproject=(PLUSOS|SMARTEYES|EXIM)",
   filterTag: "",
 };
 
@@ -100,8 +101,10 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
         let rawTitle = c.title || "Untitled Card";
         const tempDiv = document.createElement("div");
         tempDiv.innerHTML = rawTitle;
-        let title = (tempDiv.textContent || tempDiv.innerText || "").trim();
-        title = title.replace(/\[([^\]]+)\]/g, "$1");
+        const strippedTitle = (tempDiv.textContent || tempDiv.innerText || "").trim();
+        
+        // Use central parser to get clean title without [A1.00][4h]
+        const { cleanTitle: title } = parseCardTitle(strippedTitle);
 
         // Extract Variables
         const vars: Record<string, string> = { title, project: currentConfig.defaultProject };

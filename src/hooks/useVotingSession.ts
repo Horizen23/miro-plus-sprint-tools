@@ -120,7 +120,10 @@ export function useVotingSession(
             
             // Notification trigger for others
             if (metadata.status === 'voting' && lastSessionId.current !== metadata.cardId) {
-              await miro.board.notifications.showInfo(`Estimation Started: ${metadata.cardTitle}`);
+              const displayTitle = metadata.cardTitle.length > 50 
+                ? metadata.cardTitle.substring(0, 47) + "..." 
+                : metadata.cardTitle;
+              await miro.board.notifications.showInfo(`Estimation Started: ${displayTitle}`);
               lastSessionId.current = metadata.cardId;
             }
             return; // Done

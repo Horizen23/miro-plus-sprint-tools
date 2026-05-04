@@ -1,4 +1,5 @@
 import type { Card, Frame, AppCard } from "@mirohq/websdk-types";
+import { parseCardTitle, formatCardTitle } from './estimationUtils';
 
 const MIRO_BOARD_URL = process.env.NEXT_PUBLIC_MIRO_BOARD_URL || "https://miro.com/app/board/";
 
@@ -144,31 +145,30 @@ export async function handleDuplicateAndLink() {
 
 export async function handleCreateRefinementFrame() {
   const selection = await miro.board.getSelection();
-  const frames = selection.filter(item => item.type === 'frame');
+  const frames = selection.filter((item) => item.type === 'frame') as Frame[];
 
   if (frames.length === 0) {
-    await miro.board.notifications.showError("Please select at least one Frame to refine.");
+    await miro.board.notifications.showError(
+      'Please select at least one Frame to refine.'
+    );
     return;
   }
 
-  const margin = Number(process.env.NEXT_PUBLIC_MIRO_FRAME_MARGIN || 200); // Distance to the right
-  const newFrames: any[] = [];
+  const margin = Number(process.env.NEXT_PUBLIC_MIRO_FRAME_MARGIN || 200);
+  const newFrames: Frame[] = [];
 
-  for (const item of frames) {
-    const itemAny = item as any;
-    let sourceName = itemAny.title || "Untitled Frame";
+  for (const sourceFrame of frames) {
+    const sourceName = sourceFrame.title || 'Untitled Frame';
+    const w = Math.max(sourceFrame.width || 0, 100);
+    const h = Math.max(sourceFrame.height || 0, 100);
+    const x = sourceFrame.x || 0;
+    const y = sourceFrame.y || 0;
 
-    // Get exact dimensions of the selected item (minimum 100 for Miro Frames)
-    const w = Math.max(itemAny.width || 0, 100);
-    const h = Math.max(itemAny.height || 0, 100);
-    const x = itemAny.x || 0;
-    const y = itemAny.y || 0;
-
-    // Create frame exactly to the right with same height
     const targetX = x + w + margin;
     const targetY = y;
 
     try {
+      // 1. Create the new Refinement Frame
       const newFrame = await miro.board.createFrame({
         title: `Refinement: ${sourceName}`,
         x: targetX,
@@ -176,18 +176,148 @@ export async function handleCreateRefinementFrame() {
         width: w,
         height: h,
         style: {
-          fillColor: process.env.NEXT_PUBLIC_REFINEMENT_FRAME_COLOR || '#fff2cc', // Soft Peach / Skin Tone
-        }
+          fillColor:
+            process.env.NEXT_PUBLIC_REFINEMENT_FRAME_COLOR || '#fff2cc',
+        },
       });
+
+      // 2. Detect Jira Cards (app_cards and cards)
+      let cardsInside: any[] = [];
+      if (sourceFrame.childrenIds && sourceFrame.childrenIds.length > 0) {
+        const children = await miro.board.get({
+          id: sourceFrame.childrenIds,
+        });
+
+        cardsInside = children.filter(
+          (item) => item.type === 'app_card' || item.type === 'card'
+        );
+      }
+
+      // Get all existing tags once
+      const allTags = await miro.board.get({ type: 'tag' });
+
+      // 3. Get or Create Test-Frame Tag
+      let testFrameTag = allTags.find((t: any) => t.title === 'Test-Frame');
+      if (!testFrameTag) {
+        try {
+          testFrameTag = await miro.board.createTag({
+            title: 'Test-Frame',
+            color: 'red',
+          });
+          allTags.push(testFrameTag as any);
+        } catch (e) {
+          console.error('Failed to create Test-Frame tag', e);
+        }
+      }
+
+      // Define the Simplified Workflow (TA for Test)
+      const workflow = [
+        // Track T: Test (Single TA Group)
+        { title: 'QA Review Test Checklist', seq: 'TA1.00', estimate: '0h', track: 'T', color: '#f16d6d' },
+        { title: 'Test Frame', seq: 'TA2.00', estimate: '0h', track: 'T', color: '#f16d6d' },
+        { title: 'Excecute Checklist', seq: 'TA3.00', estimate: '0h', track: 'T', color: '#f16d6d' },
+        { title: 'QA Test Frame Scenario Testcase', seq: 'TA4.00', estimate: '0h', track: 'T', color: '#f16d6d' },
+      ];
+
+      const trackA: any[] = []; // Dev track now handled by the main card
+      const trackB = workflow.filter((w) => w.track === 'T');
+
+      // If no cards found, create a placeholder template
+      const itemsToProcess =
+        cardsInside.length > 0
+          ? cardsInside
+          : [
+              {
+                title: '[Template] New Item',
+                x: 0,
+                y: 0,
+                fields: [],
+              },
+            ];
+
+      let cardIndex = 0;
+      for (const card of itemsToProcess as any) {
+        // 4. Extract Issue Key from fields (Optional)
+        const jiraField = card.fields?.find(
+          (f: any) => f.tooltip === 'Issue type, Issue key'
+        );
+        const issueKey = jiraField?.value;
+
+        let jiraTag = null;
+        if (issueKey) {
+          const tagName = `jira-${issueKey}`;
+          jiraTag = allTags.find((t: any) => t.title === tagName);
+          if (!jiraTag) {
+            try {
+              jiraTag = await miro.board.createTag({
+                title: tagName,
+                color: 'black',
+              });
+              allTags.push(jiraTag as any);
+            } catch (e) {
+              console.error('Failed to create tag', tagName, e);
+            }
+          }
+        }
+
+        const frameCenterX = newFrame.x || 0;
+        const frameCenterY = newFrame.y || 0;
+        const startX = -(newFrame.width / 2) + 180; // Offset from left edge
+        const startY = -(newFrame.height / 2) + 80;  // Offset from top edge
+        const verticalGap = 150;
+        const columnWidth = 350; // Distance between Dev and Test columns
+
+        // 5. Create the main card (Dev Default - Aligned Left)
+        try {
+          // Clean existing patterns and format using central logic
+          const { cleanTitle: clean } = parseCardTitle(card.title);
+
+          const mainCard = await miro.board.createCard({
+            title: formatCardTitle({ seq: 'A1.00', estimate: '0h', cleanTitle: clean }),
+            style: { cardTheme: '#a6ccf5' },
+            x: frameCenterX + startX,
+            y: frameCenterY + startY + cardIndex * verticalGap,
+            tagIds: jiraTag ? [jiraTag.id] : [],
+          });
+          await newFrame.add(mainCard);
+          cardIndex++;
+
+          // 6. Create Parallel Workflow Cards (Test Track)
+          const maxTrackLen = Math.max(trackA.length, trackB.length);
+          for (let i = 0; i < maxTrackLen; i++) {
+            if (trackB[i]) {
+              const w = trackB[i];
+              const redCardB = await miro.board.createCard({
+                title: formatCardTitle({ seq: w.seq, estimate: w.estimate, cleanTitle: w.title }),
+                style: { cardTheme: w.color },
+                x: frameCenterX + startX,
+                y: frameCenterY + startY + cardIndex * verticalGap,
+                tagIds: [
+                  ...(jiraTag ? [jiraTag.id] : []),
+                  ...(testFrameTag ? [testFrameTag.id] : []),
+                ],
+              });
+              await newFrame.add(redCardB);
+              cardIndex++;
+            }
+          }
+          cardIndex += 0.5;
+        } catch (e) {
+          console.error('Failed to create refinement cards', e);
+        }
+      }
+
       newFrames.push(newFrame);
     } catch (error) {
-      console.error("Error creating refinement frame for item:", item.id, error);
+      console.error(
+        'Error creating refinement frame for item:',
+        sourceFrame.id,
+        error
+      );
     }
   }
 
   if (newFrames.length > 0) {
-    await miro.board.notifications.showInfo(`Created ${newFrames.length} refinement frame(s)!`);
-    // Zoom to show all new frames
     await miro.board.viewport.zoomTo(newFrames);
   }
 }
