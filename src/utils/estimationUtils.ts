@@ -58,7 +58,6 @@ export const parseCardTitle = (title: string): CardTitleData => {
     .replace(/&nbsp;/g, ' ')
     .trim();
   
-  console.log(`[DEBUG] Parsing title: "${rawTitle}"`);
 
   // Optimized pattern:
   // - Group 1: Sequence (optional, can be empty [])
@@ -75,7 +74,6 @@ export const parseCardTitle = (title: string): CardTitleData => {
       estimate: match[2] || "",
       cleanTitle: match[3] || ""
     };
-    console.log(`[DEBUG] Full Match:`, res);
     return res;
   }
 
@@ -88,7 +86,6 @@ export const parseCardTitle = (title: string): CardTitleData => {
       estimate: singleMatch[1] || "",
       cleanTitle: singleMatch[2] || ""
     };
-    console.log(`[DEBUG] Estimate Only Match:`, res);
     return res;
   }
 
@@ -101,7 +98,6 @@ export const parseCardTitle = (title: string): CardTitleData => {
       estimate: "",
       cleanTitle: seqMatch[2] || ""
     };
-    console.log(`[DEBUG] Seq Only Match:`, res);
     return res;
   }
 
@@ -110,7 +106,6 @@ export const parseCardTitle = (title: string): CardTitleData => {
     estimate: "",
     cleanTitle: rawTitle
   };
-  console.log(`[DEBUG] No Match fallback:`, res);
   return res;
 };
 
@@ -190,9 +185,6 @@ export const handleSetPointsOnItem = async (item: Card | AppCard, points: string
     cleanTitle: cleanTitle
   });
   
-  console.log(`[DEBUG] handleSetPointsOnItem - Card: ${item.id}`);
-  console.log(`[DEBUG] Old Title: "${currentTitle}"`);
-  console.log(`[DEBUG] New Title: "${newTitleFinal}"`);
 
   try {
     const freshItem = await miro.board.getById(item.id) as any;
@@ -242,7 +234,6 @@ export const calculateSelectionSummary = (items: (Card | AppCard)[]) => {
     }
     
     if (found) {
-      console.log(`[DEBUG] Item ${item.id} found estimate: ${itemEst}${unit}`);
       if (unit === 'h') actualHoursSum += itemEst;
       else actualPointsSum += itemEst;
     }
@@ -253,11 +244,6 @@ export const calculateSelectionSummary = (items: (Card | AppCard)[]) => {
   const bucketedPoint = getBucketedPoint(totalPointsRaw);
   const hourRange = mapPointsToHours(bucketedPoint);
 
-  console.log(`[DEBUG] Summary Calculation:`);
-  console.log(`- Total Items: ${items.length}`);
-  console.log(`- Raw Hours Sum: ${actualHoursSum}`);
-  console.log(`- Raw Points Sum: ${actualPointsSum}`);
-  console.log(`- Total Points (incl. mapped hours): ${totalPointsRaw}`);
 
   return {
     count: items.length,

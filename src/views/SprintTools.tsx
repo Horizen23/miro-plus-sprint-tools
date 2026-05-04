@@ -23,7 +23,6 @@ interface SprintToolsProps {
   setShowGuide: (show: boolean) => void;
   handleSelectAll: () => void;
   handleSelectInView: () => void;
-  handleInspect: () => void;
   onlineUsersCount?: number;
   handleRefresh?: () => Promise<void>;
   handleCastVote?: (p: string) => void;
@@ -51,7 +50,6 @@ export const SprintTools: React.FC<SprintToolsProps> = ({
   setShowGuide,
   handleSelectAll,
   handleSelectInView,
-  handleInspect,
   handleRefresh,
   handleCastVote,
   handleRevealVotes,
@@ -90,7 +88,6 @@ export const SprintTools: React.FC<SprintToolsProps> = ({
         <SprintActions 
           handleSelectAll={handleSelectAll}
           handleSelectInView={handleSelectInView}
-          handleInspect={handleInspect}
           handleStartVoting={handleStartVoting}
           handleAction={handleAction}
           handleCreateRefinementFrame={handleCreateRefinementFrame}

@@ -6,6 +6,7 @@ import { JiraTools } from '@/views/JiraTools';
 import { TabNav, TabItem } from '@/components/TabNav';
 import { SprintTools } from '@/views/SprintTools';
 import { CapacityPlanning } from '@/views/CapacityPlanning';
+import { SettingsView } from '@/views/Settings';
 import {
   handleDuplicateAndLink,
   handleCreateRefinementFrame,
@@ -19,9 +20,9 @@ import {
 } from '@/utils/selectionUtils';
 import { useVotingSession } from '@/hooks/useVotingSession';
 import { useSprintSelection } from '@/hooks/useSprintSelection';
-import { JiraAuthProvider } from '@/contexts/JiraAuthContext';
+import { GlobalConfigProvider } from '@/contexts/GlobalConfigContext';
 
-type Tab = 'tools' | 'capacity' | 'timesheet' | 'jira';
+type Tab = 'tools' | 'capacity' | 'timesheet' | 'jira' | 'settings';
 
 const AppPanel: React.FC = () => {
   const [activeTab, setActiveTab] = React.useState<Tab>('tools');
@@ -48,12 +49,6 @@ const AppPanel: React.FC = () => {
       handleSetPoints,
       estimateUnit
     );
-
-  const handleInspect = async () => {
-    const selection = await miro.board.getSelection();
-    console.log('Current selection:', selection);
-    await miro.board.notifications.showInfo('Details logged to console (F12).');
-  };
 
   const tabs: TabItem[] = [
     {
@@ -138,6 +133,25 @@ const AppPanel: React.FC = () => {
         </svg>
       ),
     },
+    {
+      id: 'settings',
+      label: 'Settings',
+      icon: (
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      ),
+    },
   ];
 
   const contentMap: Record<Tab, React.ReactNode> = {
@@ -161,53 +175,55 @@ const AppPanel: React.FC = () => {
         setShowGuide={setShowGuide}
         handleSelectAll={handleSelectAll}
         handleSelectInView={handleSelectInView}
-        handleInspect={handleInspect}
       />
     ),
     capacity: <CapacityPlanning />,
     jira: <JiraTools selection={rawSelection} />,
     timesheet: <Timesheet items={selectedItems} />,
+    settings: <SettingsView />,
   };
 
   return (
-    <div className="container">
-      {votingSession &&
-        votingSession.status === 'voting' &&
-        activeTab !== 'tools' && (
-          <div
-            className="voting-toast"
-            onClick={() => setActiveTab('tools')}
-          >
-            <div className="voting-toast-content">
-              <span className="voting-pulse"></span>
-              <span className="voting-text">
-                Voting on: <strong>{votingSession.cardTitle}</strong>
-              </span>
+    <GlobalConfigProvider>
+      <div className="container">
+        {votingSession &&
+          votingSession.status === 'voting' &&
+          activeTab !== 'tools' && (
+            <div
+              className="voting-toast"
+              onClick={() => setActiveTab('tools')}
+            >
+              <div className="voting-toast-content">
+                <span className="voting-pulse"></span>
+                <span className="voting-text">
+                  Voting on: <strong>{votingSession.cardTitle}</strong>
+                </span>
+              </div>
+              <button className="voting-join-btn">Join Now</button>
             </div>
-            <button className="voting-join-btn">Join Now</button>
-          </div>
-        )}
-      <TabNav
-        tabs={tabs}
-        activeTab={activeTab}
-        onTabChange={(id) => setActiveTab(id as Tab)}
-      />
+          )}
+        <TabNav
+          tabs={tabs}
+          activeTab={activeTab}
+          onTabChange={(id) => setActiveTab(id as Tab)}
+        />
 
-      <main className="content">{contentMap[activeTab]}</main>
+        <main className="content">{contentMap[activeTab]}</main>
 
-      <footer className="footer">
-        <span
-          className={`status-dot ${
-            summary.count > 0 || memoizedItems.length > 0 ? 'online' : ''
-          }`}
-        ></span>
-        {summary.count > 0
-          ? `Selected ${summary.count} items`
-          : memoizedItems.length > 0
-          ? `Targeting last selection (${memoizedItems.length} items)`
-          : 'Select cards to start'}
-      </footer>
-    </div>
+        <footer className="footer">
+          <span
+            className={`status-dot ${
+              summary.count > 0 || memoizedItems.length > 0 ? 'online' : ''
+            }`}
+          ></span>
+          {summary.count > 0
+            ? `Selected ${summary.count} items`
+            : memoizedItems.length > 0
+            ? `Targeting last selection (${memoizedItems.length} items)`
+            : 'Select cards to start'}
+        </footer>
+      </div>
+    </GlobalConfigProvider>
   );
 };
 

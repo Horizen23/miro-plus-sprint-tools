@@ -36,6 +36,6 @@ export const SummaryRow: React.FC<{ children: React.ReactNode; style?: React.CSS
   return <div className="summary-row" style={style}>{children}</div>;
 };
 
-export const SummaryDivider: React.FC = () => {
-  return <div className="summary-divider"></div>;
+export const SummaryDivider: React.FC<{style?: React.CSSProperties}> = ({ style }) => {
+  return <div className="summary-divider" style={style}></div>;
 };

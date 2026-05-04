@@ -65,13 +65,11 @@ export function useVotingSession(
     }
 
     const handleUpdate = (state: VotingSession) => {
-      console.log("useVotingSession: Realtime update received:", state);
       
       setVotingSession(prevSession => {
         // Handle session end
         if (state.status === null) {
           if (prevSession && state.cardId === prevSession.cardId) {
-            console.log("useVotingSession: Ending current session (from realtime)");
             lastSessionId.current = null;
             return null;
           }
@@ -85,7 +83,6 @@ export function useVotingSession(
         
         // Discover NEW session
         if (!prevSession && state.status === 'voting' && state.cardId !== lastSessionId.current) {
-          console.log("useVotingSession: Picking up new session from realtime:", state.cardId);
           return state;
         }
 
@@ -175,7 +172,6 @@ export function useVotingSession(
   };
 
   React.useEffect(() => {
-    console.log("useVotingSession: Initial sync on mount");
     syncVotingSession();
     // Only sync on mount. Updates will be handled by Socket.io or manual actions.
   }, []); // Run once on mount
@@ -342,7 +338,6 @@ export function useVotingSession(
   };
 
   const handleRefresh = async () => {
-    console.log("useVotingSession: Manual refresh requested");
     await syncVotingSession();
   };
 
@@ -390,15 +385,12 @@ export function useVotingSession(
   const handleResetVoting = async () => {
     if (!votingSession) return;
     const cardId = votingSession.cardId;
-    console.log("useVotingSession: handleResetVoting for card:", cardId);
     
     try {
       const card = await miro.board.getById(cardId) as any;
       if (card && card.setMetadata) {
-        console.log("useVotingSession: Clearing Miro metadata...");
         const votingMetaKey = process.env.NEXT_PUBLIC_MIRO_METADATA_VOTING_KEY || "plus-sprint-tools";
         await card.setMetadata(votingMetaKey, null);
-        console.log("useVotingSession: Miro metadata cleared");
       }
       
       // Notify realtime server to clear memory and broadcast to others
@@ -407,7 +399,6 @@ export function useVotingSession(
       
       setVotingSession(null);
       lastSessionId.current = null;
-      console.log("useVotingSession: Local state reset to null");
       onFinished?.();
     } catch (e) {
       console.error("useVotingSession: Reset voting failed", e);

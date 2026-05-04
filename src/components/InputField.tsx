@@ -15,7 +15,8 @@ export const InputField: React.FC<InputFieldProps> = ({
   const commonProps = {
     className: `form-input ${className}`,
     style,
-    ...props
+    ...props,
+    value: props.value ?? "",
   };
 
   return (

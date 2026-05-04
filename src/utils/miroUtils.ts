@@ -486,3 +486,45 @@ export async function handleReorderSelectedCards() {
     
   await miro.board.notifications.showInfo(truncated);
 }
+
+/**
+ * Robust copy to clipboard with fallback for restricted environments (like iframes)
+ */
+export const copyToClipboard = async (text: string): Promise<boolean> => {
+  // Try Modern API first
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (err) {
+    console.warn("Modern Clipboard API failed, attempting fallback", err);
+  }
+
+  // Fallback: execCommand('copy') with hidden textarea
+  try {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    
+    // Ensure textarea is not visible but part of the DOM
+    textArea.style.position = "fixed";
+    textArea.style.left = "-9999px";
+    textArea.style.top = "0";
+    textArea.style.opacity = "0";
+    textArea.style.pointerEvents = "none";
+    
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    
+    const successful = document.execCommand('copy');
+    document.body.removeChild(textArea);
+    
+    if (successful) return true;
+  } catch (err) {
+    console.error("Clipboard fallback failed", err);
+  }
+
+  return false;
+};
+

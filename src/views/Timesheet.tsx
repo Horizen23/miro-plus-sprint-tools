@@ -1,89 +1,118 @@
 import * as React from "react";
-import type { Card, AppCard } from "@mirohq/websdk-types";
+import type { Card, AppCard, UserInfo } from "@mirohq/websdk-types";
 import { parseCardTitle } from "../utils/estimationUtils";
 import { SectionHeader } from "../components/SectionHeader";
 import { SummaryCard, SummaryDivider } from "../components/SummaryCard";
 import { Button } from "../components/Button";
 import { InputField } from "../components/InputField";
 import { ListItem } from "../components/ListItem";
+import { copyToClipboard } from "../utils/miroUtils";
+import { useGlobalConfig, GlobalConfig as TimesheetConfig } from "../contexts/GlobalConfigContext";
+import { parseUserMapping, isUserOwnerOfCard } from "../utils/mappingUtils";
 
 interface TimesheetProps {
   items: (Card | AppCard)[];
 }
 
-interface TimesheetConfig {
-  project: string;
-  defaultProject: string;
-  meetingTag: string;
-  meetingPattern: string;
-  taskTag: string;
-  taskPattern: string;
-  variables: string;
-  filterTag: string;
-}
-
-const DEFAULT_CONFIG: TimesheetConfig = {
-  project: "[{project}]",
-  defaultProject: process.env.NEXT_PUBLIC_TIMESHEET_DEFAULT_PROJECT || "PLUSOS",
-  meetingTag: "meeting",
-  meetingPattern: "[Meeting][Sprint] {title}",
-  taskTag: "jira-(.+)",
-  taskPattern: "[Task][{tag}] {title}",
-  variables: process.env.NEXT_PUBLIC_TIMESHEET_VARIABLES || "tag=jira-(.+)\nproject=(PLUSOS|SMARTEYES|EXIM)",
-  filterTag: "",
-};
-
 export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
+  const { config, isLoading } = useGlobalConfig();
   const [timesheet, setTimesheet] = React.useState<Record<string, { title: string, cardId: string }[]>>({});
-  const [config, setConfig] = React.useState<TimesheetConfig>(DEFAULT_CONFIG);
+  const [filterOnlyMe, setFilterOnlyMe] = React.useState(false);
+  const [filterTag, setFilterTag] = React.useState("");
   const [showConfig, setShowConfig] = React.useState(false);
   const [copying, setCopying] = React.useState(false);
+  const [userInfo, setUserInfo] = React.useState<UserInfo | null>(null);
 
   React.useEffect(() => {
-    const loadConfig = async () => {
+    const loadState = async () => {
       try {
-        const appDataKey = process.env.NEXT_PUBLIC_MIRO_APPDATA_TIMESHEET_KEY || "timesheetConfig";
-        const savedConfig = await (miro.board as any).getAppData(appDataKey);
-        if (savedConfig) {
-          setConfig(prev => ({ ...prev, ...(savedConfig as object) }));
-        }
+        const info = await miro.board.getUserInfo();
+        setUserInfo(info);
       } catch (e) {}
+
+      // Load Personal Config (LocalStorage)
+      const localOnlyMe = localStorage.getItem('miro_timesheet_only_me');
+      if (localOnlyMe !== null) {
+        setFilterOnlyMe(localOnlyMe === 'true');
+      }
+      const localTag = localStorage.getItem('miro_timesheet_filter_tag');
+      if (localTag !== null) {
+        setFilterTag(localTag);
+      }
     };
-    loadConfig();
+    loadState();
   }, []);
 
-  const updateConfig = async (newConfig: Partial<TimesheetConfig>) => {
-    const updated = { ...config, ...newConfig };
-    setConfig(updated);
-    try {
-      const appDataKey = process.env.NEXT_PUBLIC_MIRO_APPDATA_TIMESHEET_KEY || "timesheetConfig";
-      await (miro.board as any).setAppData(appDataKey, updated);
-    } catch (e) {}
+  const updatePersonalOnlyMe = (val: boolean) => {
+    setFilterOnlyMe(val);
+    localStorage.setItem('miro_timesheet_only_me', String(val));
   };
 
+  const updatePersonalTag = (val: string) => {
+    setFilterTag(val);
+    localStorage.setItem('miro_timesheet_filter_tag', val);
+  };
 
-
-  const generateTimesheet = async (cards: (Card | AppCard)[], currentConfig: TimesheetConfig) => {
+  const generateTimesheet = async (cards: (Card | AppCard)[], currentConfig: TimesheetConfig, onlyMe: boolean, currentFilterTag: string) => {
     const grouped: Record<string, { title: string, cardId: string }[]> = {};
     const allTags = await miro.board.get({ type: "tag" });
     const tagMap = new Map(allTags.map(t => [t.id, t.title]));
 
-    cards.forEach((card) => {
-      if (card.type !== "card") return;
-      const c = card as Card;
-      if (!c.startDate) return;
+    // Parse User Mapping using utility
+    const mapping = parseUserMapping(currentConfig.tsUserMapping);
+
+    for (const card of cards) {
+      if (card.type !== "card" && card.type !== "app_card") continue;
+      
+      let c = card as any;
+      
+      // Fetch full item to get description if missing
+      if (c.type === 'card' && !c.description) {
+        try {
+          c = await miro.board.getById(c.id);
+        } catch(e) {}
+      }
+
+      if (!c.startDate) continue;
 
       const cardTags = (c.tagIds || [])
-        .map(tagId => tagMap.get(tagId))
+        .map((tagId: string) => tagMap.get(tagId))
         .filter(Boolean) as string[];
 
-      // Filter by User Tag
-      if (currentConfig.filterTag) {
+      // 1. Filter by Tag
+      if (currentFilterTag) {
         try {
-          const filterRe = new RegExp(currentConfig.filterTag, "i");
-          if (!cardTags.some(t => filterRe.test(t))) return;
+          const filterRe = new RegExp(currentFilterTag, "i");
+          if (!cardTags.some(t => filterRe.test(t))) continue;
         } catch (e) {
-          if (!cardTags.some(t => t.toLowerCase().includes(currentConfig.filterTag.toLowerCase()))) return;
+          if (!cardTags.some(t => t.toLowerCase().includes(currentFilterTag.toLowerCase()))) continue;
+        }
+      }
+
+      // 2. Filter by Me (Only My Tasks)
+      if (onlyMe && userInfo) {
+        // Standard Miro Assignee check
+        const isMiroAssignee = c.assigneeId === userInfo.id;
+        
+        // Use mapping utility to check ownership (ignores jira-* tags)
+        const isMappedOwner = isUserOwnerOfCard(cardTags, mapping, userInfo);
+
+        // Match by Jira Assignee in metadata (email match)
+        let isJiraAssignee = false;
+        const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
+        const meta = c.metadata?.[metadataKey];
+        const myEmail = (userInfo as any).email?.toLowerCase();
+        if (meta?.assigneeEmail && myEmail && meta.assigneeEmail.toLowerCase() === myEmail) {
+          isJiraAssignee = true;
+        }
+
+        // Match by Name/Email in Title or Description (Last Resort)
+        const myName = userInfo.name?.toLowerCase();
+        const inContent = (c.title + " " + (c.description || "")).toLowerCase();
+        const contentMatch = (myName && inContent.includes(myName)) || (myEmail && inContent.includes(myEmail));
+
+        if (!isMiroAssignee && !isMappedOwner && !isJiraAssignee && !contentMatch) {
+          continue;
         }
       }
 
@@ -99,16 +128,14 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
         if (!grouped[dateStr]) grouped[dateStr] = [];
         
         let rawTitle = c.title || "Untitled Card";
-        const tempDiv = document.createElement("div");
-        tempDiv.innerHTML = rawTitle;
-        const strippedTitle = (tempDiv.textContent || tempDiv.innerText || "").trim();
+        const strippedTitle = rawTitle.replace(/<[^>]*>/g, '').trim();
         
-        // Use central parser to get clean title without [A1.00][4h]
+        // Use central parser to get clean title
         const { cleanTitle: title } = parseCardTitle(strippedTitle);
 
         // Extract Variables
-        const vars: Record<string, string> = { title, project: currentConfig.defaultProject };
-        const varLines = currentConfig.variables.split('\n');
+        const vars: Record<string, string> = { title, project: currentConfig.tsDefaultProject };
+        const varLines = currentConfig.tsVariables.split('\n');
 
         varLines.forEach(line => {
           const splitIdx = line.indexOf('=');
@@ -127,6 +154,9 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
             try {
               const re = new RegExp(regexStr, 'i');
               for (const t of cardTags) {
+                // Ignore jira metadata tags for variable extraction
+                if (t.toLowerCase().startsWith('jira-')) continue;
+
                 const m = t.match(re);
                 if (m) {
                   vars[name] = m[1] || m[0];
@@ -139,14 +169,14 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
 
         let isMeeting = false;
         try {
-          const meetingRe = new RegExp(currentConfig.meetingTag, "i");
+          const meetingRe = new RegExp(currentConfig.tsMeetingTag, "i");
           isMeeting = cardTags.some(t => meetingRe.test(t));
         } catch (e) {
-          isMeeting = cardTags.some(t => t.toLowerCase().includes(currentConfig.meetingTag.toLowerCase()));
+          isMeeting = cardTags.some(t => t.toLowerCase().includes(currentConfig.tsMeetingTag.toLowerCase()));
         }
 
-        let finalTitle = isMeeting ? currentConfig.meetingPattern : currentConfig.taskPattern;
-        finalTitle = `${currentConfig.project}${finalTitle}`;
+        let finalTitle = isMeeting ? currentConfig.tsMeetingPattern : currentConfig.tsTaskPattern;
+        finalTitle = `${currentConfig.tsProject}${finalTitle}`;
 
         Object.entries(vars).forEach(([name, val]) => {
           finalTitle = finalTitle.replace(new RegExp(`{${name}}`, 'g'), val || "");
@@ -155,7 +185,7 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
         grouped[dateStr].push({ title: finalTitle, cardId: c.id });
         current.setDate(current.getDate() + 1);
       }
-    });
+    }
 
     const sortedKeys = Object.keys(grouped).sort();
     const sortedGrouped: Record<string, { title: string, cardId: string }[]> = {};
@@ -165,11 +195,11 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
 
   React.useEffect(() => {
     const updateTimesheet = async () => {
-      const ts = await generateTimesheet(items, config);
+      const ts = await generateTimesheet(items, config, filterOnlyMe, filterTag);
       setTimesheet(ts);
     };
     updateTimesheet();
-  }, [items, config]);
+  }, [items, config, filterOnlyMe, filterTag]);
 
   const handleCopyAll = () => {
     let text = "";
@@ -185,9 +215,22 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
       text += "\n";
     });
     
-    navigator.clipboard.writeText(text.trim());
+    copyToClipboard(text.trim());
     setCopying(true);
     setTimeout(() => setCopying(false), 2000);
+  };
+
+  const handleCopyDay = (date: string, dayItems: { title: string }[]) => {
+    const dateObj = new Date(date);
+    const thaiDate = dateObj.toLocaleDateString('th-TH', { 
+      weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'
+    });
+    let text = `${thaiDate}\n`;
+    dayItems.forEach(item => {
+      text += `- ${item.title}\n`;
+    });
+    copyToClipboard(text.trim());
+    miro.board.notifications.showInfo(`คัดลอกข้อมูลวันที่ ${thaiDate} แล้ว`);
   };
 
   const zoomToCard = async (id: string) => {
@@ -197,15 +240,18 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
     } catch (e) {}
   };
 
+  if (isLoading) return <div className="loading">Loading...</div>;
+
   return (
     <div className="timesheet-container">
+      {/* Quick Personal Filters (Collapsible) */}
       <section className="config-section">
         <SectionHeader 
-          title="Config Timesheet" 
+          title="Personal Filter" 
           icon={(
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3"></circle>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+              <circle cx="12" cy="7" r="4"></circle>
             </svg>
           )}
           isExpandable
@@ -214,34 +260,28 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
         />
 
         {showConfig && (
-          <div className="config-body">
+          <div className="config-body" style={{ marginTop: '4px' }}>
             <SummaryCard>
               <InputField 
-                label="Variables (name=regex)"
-                isTextArea
-                style={{ minHeight: '60px' }}
-                value={config.variables}
-                onChange={(e) => updateConfig({ variables: e.target.value })}
+                placeholder="Filter by Tag (e.g. Sprint-21)"
+                value={filterTag}
+                onChange={(e) => updatePersonalTag(e.target.value)}
               />
-              <InputField 
-                label="Default Project"
-                value={config.defaultProject}
-                onChange={(e) => updateConfig({ defaultProject: e.target.value })}
-              />
-              <InputField 
-                label="Filter Tag"
-                value={config.filterTag}
-                onChange={(e) => updateConfig({ filterTag: e.target.value })}
-              />
-              
-              <SummaryDivider />
-              <Button onClick={() => setShowConfig(false)} fullWidth>
-                Close Settings
-              </Button>
+              <div style={{ marginTop: '4px' }}>
+                <InputField 
+                  type="checkbox"
+                  label="Show only my tasks (Only Me)"
+                  checked={Boolean(filterOnlyMe)}
+                  onChange={(e: any) => updatePersonalOnlyMe(e.target.checked)}
+                  style={{ width: '15px', height: '15px', cursor: 'pointer' }}
+                />
+              </div>
             </SummaryCard>
           </div>
         )}
       </section>
+
+      <SummaryDivider style={{ margin: '12px 0' }} />
 
       {Object.keys(timesheet).length > 0 ? (
         <section className="timesheet-section">
@@ -268,7 +308,7 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
           </div>
           
           <div className="timesheet-list">
-            {Object.entries(timesheet).map(([date, items]) => {
+            {Object.entries(timesheet).map(([date, dayItems]) => {
               const dateObj = new Date(date);
               const thaiDate = dateObj.toLocaleDateString('th-TH', { 
                 weekday: 'short', day: 'numeric', month: 'short'
@@ -276,11 +316,23 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
               return (
                 <div key={date} className="timesheet-group">
                   <div className="date-header">
-                    <span className="date-value">{thaiDate}</span>
-                    <span className="card-count">{items.length} รายการ</span>
+                    <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                      <span className="date-value">{thaiDate}</span>
+                      <span className="card-count">{dayItems.length} รายการ</span>
+                    </div>
+                    <button 
+                      className="btn-tiny-copy"
+                      title="Copy this day"
+                      onClick={() => handleCopyDay(date, dayItems)}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                      </svg>
+                    </button>
                   </div>
                   <div className="titles-container">
-                    {items.map((item, idx) => (
+                    {dayItems.map((item, idx) => (
                       <ListItem 
                         key={`${date}-${idx}`} 
                         title={item.title}

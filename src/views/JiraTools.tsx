@@ -1,4 +1,5 @@
 import * as React from "react";
+import type { Card, AppCard } from "@mirohq/websdk-types";
 import { JiraService } from "../utils/jiraService";
 import { SectionHeader } from "../components/SectionHeader";
 import { SummaryCard, SummaryItem, SummaryRow, SummaryDivider } from "../components/SummaryCard";
@@ -6,6 +7,9 @@ import { Button } from "../components/Button";
 import { InputField } from "../components/InputField";
 import { ListItem } from "../components/ListItem";
 import { useJiraAuth } from "../contexts/JiraAuthContext";
+import { useGlobalConfig } from "../contexts/GlobalConfigContext";
+import { parseUserMapping, getCardMappedUser } from "../utils/mappingUtils";
+
 interface SelectedCard {
   id: string;
   type: string;
@@ -176,6 +180,9 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
     else setCheckedIds(new Set(validIds));
   };
 
+  // --- Global Config (User Mapping) ---
+  const { config: globalConfig } = useGlobalConfig();
+
   // --- Main Sync Action ---
   const syncToJira = async () => {
     const cardsToSync = selectedCards.filter(c => checkedIds.has(c.id));
@@ -192,22 +199,55 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
       const userInfo = await miro.board.getUserInfo();
       const currentMiroUserId = userInfo.id;
 
-      let myAccountId: string | undefined;
-      // Pre-fetch my Jira account ID if any card is assigned to me in Miro
-      if (cardsToSync.some(c => c.assigneeId === currentMiroUserId)) {
-        try {
-          const myself = await withRefresh(s => s.getMyself());
-          if (myself) myAccountId = myself.accountId;
-        } catch (e) {
-          console.warn("Could not fetch Jira profile for assignee mapping", e);
-        }
-      }
+      // Parse User Mapping using utility
+      const mapping = parseUserMapping(globalConfig?.tsUserMapping || "");
+
+      // Cache for Jira Account IDs to avoid redundant searches
+      const jiraAccountCache = new Map<string, string>();
+
+      // Pre-fetch my Jira account ID
+      try {
+        const myself = await withRefresh(s => s.getMyself());
+        if (myself) jiraAccountCache.set((userInfo as any).email?.toLowerCase() || 'me', myself.accountId);
+      } catch (e) { console.warn("Could not fetch my Jira profile", e); }
+
+      const allBoardTags = await miro.board.get({ type: 'tag' });
 
       for (const card of cardsToSync) {
         const originalItem = await miro.board.getById(card.id) as any;
         if (!originalItem) continue;
 
-        const targetAssignee = card.assigneeId === currentMiroUserId ? myAccountId : undefined;
+        // --- Determine Assignee ---
+        let targetAssignee: string | undefined;
+
+        // 1. Check if assigned to current user in Miro
+        if (card.assigneeId === currentMiroUserId) {
+          targetAssignee = jiraAccountCache.get((userInfo as any).email?.toLowerCase() || 'me');
+        }
+
+        // 2. Check User Mapping if no assignee found yet
+        if (!targetAssignee && mapping.size > 0) {
+          const cardTagTitles = allBoardTags
+            .filter(t => originalItem.tagIds?.includes(t.id))
+            .map(t => t.title);
+
+          const mappedUser = getCardMappedUser(cardTagTitles, mapping);
+          if (mappedUser) {
+            // Try to find this user in Jira (if not cached)
+            if (jiraAccountCache.has(mappedUser)) {
+              targetAssignee = jiraAccountCache.get(mappedUser);
+            } else {
+              try {
+                const foundUsers = await withRefresh(s => s.findUsers(mappedUser)) as any[];
+                if (foundUsers && foundUsers.length > 0) {
+                  const accountId = foundUsers[0].accountId;
+                  jiraAccountCache.set(mappedUser, accountId);
+                  targetAssignee = accountId;
+                }
+              } catch (err) { console.warn(`Could not find Jira user for: ${mappedUser}`, err); }
+            }
+          }
+        }
 
         try {
           if (card.syncedKey) {

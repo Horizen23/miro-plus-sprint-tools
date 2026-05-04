@@ -4,7 +4,6 @@ import { Button } from "./Button";
 interface SprintActionsProps {
   handleSelectAll: () => void;
   handleSelectInView: () => void;
-  handleInspect: () => void;
   handleStartVoting: () => void;
   handleAction: (fn: () => Promise<any>) => void;
   handleCreateRefinementFrame: () => Promise<any>;
@@ -22,7 +21,6 @@ interface SprintActionsProps {
 export const SprintActions: React.FC<SprintActionsProps> = ({
   handleSelectAll,
   handleSelectInView,
-  handleInspect,
   handleStartVoting,
   handleAction,
   handleCreateRefinementFrame,
@@ -43,7 +41,6 @@ export const SprintActions: React.FC<SprintActionsProps> = ({
       <div className="selection-helpers">
         <button className="btn-secondary" onClick={handleSelectAll}>All</button>
         <button className="btn-secondary" onClick={handleSelectInView}>View</button>
-        <button className="btn-secondary" onClick={handleInspect} disabled={isProcessing}>Log</button>
       </div>
 
       <span className="group-title">Smart Actions</span>

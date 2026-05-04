@@ -162,7 +162,11 @@ export class JiraService {
         Accept: "application/json",
       },
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      const err = new Error(`Jira API Error ${response.status}: Failed to get user profile`);
+      (err as any).status = response.status;
+      throw err;
+    }
     return await response.json();
   }
 
@@ -277,7 +281,7 @@ export class JiraService {
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`Failed to update issue ${issueKey}: ${response.status} ${error}`);
+      throw new Error(`Jira API Error ${response.status}: Failed to update issue ${issueKey} - ${error}`);
     }
 
     return true;
@@ -290,7 +294,11 @@ export class JiraService {
         Accept: "application/json",
       },
     });
-    if (!response.ok) throw new Error(`Failed to fetch transitions for ${issueKey}`);
+    if (!response.ok) {
+      const err = new Error(`Jira API Error ${response.status}: Failed to fetch transitions`);
+      (err as any).status = response.status;
+      throw err;
+    }
     const data = await response.json();
     return data.transitions || [];
   }
@@ -314,5 +322,16 @@ export class JiraService {
       throw new Error(`Failed to transition issue ${issueKey}: ${response.status} ${error}`);
     }
     return true;
+  }
+
+  async findUsers(query: string): Promise<any[]> {
+    const response = await fetch(`${this.apiBaseUrl}/user/search?query=${encodeURIComponent(query)}`, {
+      headers: {
+        Authorization: this.authHeader,
+        Accept: "application/json",
+      },
+    });
+    if (!response.ok) return [];
+    return await response.json();
   }
 }

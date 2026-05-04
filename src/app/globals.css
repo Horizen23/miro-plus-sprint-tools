@@ -1178,3 +1178,24 @@ textarea.form-input {
   color: #a5adba;
   cursor: not-allowed;
 }
+
+.btn-tiny-copy {
+  background: white;
+  border: 1px solid #eaeaeb;
+  border-radius: 6px;
+  padding: 4px;
+  color: #8c90b0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.btn-tiny-copy:hover {
+  background: #f0f2ff;
+  color: #4262ff;
+  border-color: #4262ff;
+  box-shadow: 0 2px 5px rgba(66, 98, 255, 0.1);
+}
+
