@@ -231,7 +231,15 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
             .filter(t => originalItem.tagIds?.includes(t.id))
             .map(t => t.title);
 
-          const mappedUser = getCardMappedUser(cardTagTitles, mapping);
+          let ignoreRegex = "";
+          const vars = globalConfig?.tsVariables || "";
+          const tagLine = vars.split('\n').find((l: string) => l.trim().startsWith('tag='));
+          if (tagLine) {
+            const parts = tagLine.split('=');
+            if (parts[1]) ignoreRegex = parts[1].trim();
+          }
+
+          const mappedUser = getCardMappedUser(cardTagTitles, mapping, ignoreRegex);
           if (mappedUser) {
             // Try to find this user in Jira (if not cached)
             if (jiraAccountCache.has(mappedUser)) {

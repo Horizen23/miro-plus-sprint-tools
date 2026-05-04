@@ -31,7 +31,8 @@ export function parseUserMapping(mappingStr: string = ""): Map<string, string> {
 export function isUserOwnerOfCard(
   cardTags: string[], 
   mapping: Map<string, string>, 
-  userInfo: any
+  userInfo: any,
+  ignoreRegex?: string
 ): boolean {
   if (!userInfo) return false;
 
@@ -39,13 +40,20 @@ export function isUserOwnerOfCard(
   const myName = userInfo.name?.toLowerCase();
   const myEmail = (userInfo as any).email?.toLowerCase();
 
-  // Ignore metadata tags
-  const relevantTags = cardTags
-    .map(t => t.toLowerCase())
-    .filter(t => !t.startsWith('jira-'));
+  // Create Regex for metadata tags if provided
+  let metadataRe: RegExp | null = null;
+  if (ignoreRegex) {
+    try { metadataRe = new RegExp(ignoreRegex, 'i'); } catch(e) {}
+  }
+
+  // Ignore tags matching the regex if defined
+  const relevantTags = metadataRe 
+    ? cardTags.filter(t => !metadataRe!.test(t))
+    : cardTags;
 
   for (const tag of relevantTags) {
-    const mappedVal = mapping.get(tag);
+    const lowerTag = tag.toLowerCase();
+    const mappedVal = mapping.get(lowerTag);
     if (mappedVal) {
       const lowerVal = mappedVal.toLowerCase();
       if (myEmail && lowerVal === myEmail) return true;
@@ -61,18 +69,27 @@ export function isUserOwnerOfCard(
  * Gets the mapped user identity (email/name) for a card
  * @param cardTags List of tag titles on the card
  * @param mapping Parsed mapping
+ * @param ignoreRegex Optional regex to ignore specific tags
  * @returns string | undefined
  */
 export function getCardMappedUser(
   cardTags: string[],
-  mapping: Map<string, string>
+  mapping: Map<string, string>,
+  ignoreRegex?: string
 ): string | undefined {
-  const relevantTags = cardTags
-    .map(t => t.toLowerCase())
-    .filter(t => !t.startsWith('jira-'));
+  // Create Regex for metadata tags if provided
+  let metadataRe: RegExp | null = null;
+  if (ignoreRegex) {
+    try { metadataRe = new RegExp(ignoreRegex, 'i'); } catch(e) {}
+  }
+
+  const relevantTags = metadataRe
+    ? cardTags.filter(t => !metadataRe!.test(t))
+    : cardTags;
 
   for (const tag of relevantTags) {
-    const val = mapping.get(tag);
+    const lowerTag = tag.toLowerCase();
+    const val = mapping.get(lowerTag);
     if (val) return val;
   }
   return undefined;

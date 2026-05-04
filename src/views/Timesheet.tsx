@@ -61,6 +61,14 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
     // Parse User Mapping using utility
     const mapping = parseUserMapping(currentConfig.tsUserMapping);
 
+    // Extract 'tag' regex from variables for consistent ignoring
+    let tagRegex = ""; // Default: No ignore
+    const tagVarLine = currentConfig.tsVariables.split('\n').find(l => l.trim().startsWith('tag='));
+    if (tagVarLine) {
+      const parts = tagVarLine.split('=');
+      if (parts[1]) tagRegex = parts[1].trim();
+    }
+
     for (const card of cards) {
       if (card.type !== "card" && card.type !== "app_card") continue;
       
@@ -95,7 +103,7 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
         const isMiroAssignee = c.assigneeId === userInfo.id;
         
         // Use mapping utility to check ownership (ignores jira-* tags)
-        const isMappedOwner = isUserOwnerOfCard(cardTags, mapping, userInfo);
+        const isMappedOwner = isUserOwnerOfCard(cardTags, mapping, userInfo, tagRegex);
 
         // Match by Jira Assignee in metadata (email match)
         let isJiraAssignee = false;

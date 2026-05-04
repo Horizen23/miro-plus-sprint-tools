@@ -29,7 +29,7 @@ export default function InitContent() {
       };
 
       // --- Register Custom Actions ---
-      const updateCardStatus = async (card: Card, status: 'to-do' | 'in-progress' | 'done', jiraWithRefresh: (<T>(fn: (s: JiraService) => Promise<T>) => Promise<T>) | null, userInfo: any, myAccountId?: string, mapping?: any) => {
+      const updateCardStatus = async (card: Card, status: 'to-do' | 'in-progress' | 'done', jiraWithRefresh: (<T>(fn: (s: JiraService) => Promise<T>) => Promise<T>) | null, userInfo: any, myAccountId?: string, mapping?: any, ignoreRegex?: string) => {
         const today = new Date().toISOString().split('T')[0];
         const currentMiroUserId = userInfo?.id;
 
@@ -41,8 +41,8 @@ export default function InitContent() {
           const tags = await miro.board.get({ type: 'tag' });
           const cardTags = tags.filter(t => (card as any).tagIds?.includes(t.id)).map(t => t.title);
           
-          mappedUserIdentity = getCardMappedUser(cardTags, mapping || {});
-          isMe = isUserOwnerOfCard(cardTags, mapping || {}, userInfo);
+          mappedUserIdentity = getCardMappedUser(cardTags, mapping || {}, ignoreRegex);
+          isMe = isUserOwnerOfCard(cardTags, mapping || {}, userInfo, ignoreRegex);
         } catch (e) {}
 
         if (status === 'in-progress') {
@@ -194,12 +194,17 @@ export default function InitContent() {
         let myAccountId: string | undefined;
         let globalMapping: any = {};
         
+        let ignoreRegex = "";
         try {
-          await notify("Initializing Jira Sync...", "info");
-
-          
           const gConfig = await (miro.board as any).getAppData("globalConfig") || await (miro.board as any).getAppData("timesheetConfig");
           globalMapping = parseUserMapping(gConfig?.tsUserMapping || gConfig?.userMapping || "");
+          
+          const vars = gConfig?.tsVariables || gConfig?.variables || "";
+          const tagLine = vars.split('\n').find((l: string) => l.trim().startsWith('tag='));
+          if (tagLine) {
+            const parts = tagLine.split('=');
+            if (parts[1]) ignoreRegex = parts[1].trim();
+          }
 
           
 
@@ -220,8 +225,7 @@ export default function InitContent() {
 
         
         for (const item of cards) {
-
-          const success = await updateCardStatus(item as Card, status, withRefresh, userInfo, myAccountId, globalMapping);
+          const success = await updateCardStatus(item as Card, status, withRefresh, userInfo, myAccountId, globalMapping, ignoreRegex);
           if (success) {
             processedCount++;
 

@@ -6,7 +6,6 @@ export interface GlobalConfig {
   tsVariables: string;
   tsMeetingTag: string;
   tsMeetingPattern: string;
-  tsTaskTag: string;
   tsTaskPattern: string;
   tsUserMapping: string;
   jiraDomain: string;
@@ -18,7 +17,6 @@ export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = {
   tsVariables: process.env.NEXT_PUBLIC_TIMESHEET_VARIABLES || "tag=jira-(.+)\nproject=(PLUSOS|SMARTEYES|EXIM)",
   tsMeetingTag: "meeting",
   tsMeetingPattern: "[Meeting][Sprint] {title}",
-  tsTaskTag: "jira-(.+)",
   tsTaskPattern: "[Task][{tag}] {title}",
   tsUserMapping: "nickname=email@company.com",
   jiraDomain: "",
@@ -55,7 +53,6 @@ export const GlobalConfigProvider: React.FC<{ children: React.ReactNode }> = ({ 
               tsUserMapping: legacy.userMapping || DEFAULT_GLOBAL_CONFIG.tsUserMapping,
               tsMeetingTag: legacy.meetingTag || DEFAULT_GLOBAL_CONFIG.tsMeetingTag,
               tsMeetingPattern: legacy.meetingPattern || DEFAULT_GLOBAL_CONFIG.tsMeetingPattern,
-              tsTaskTag: legacy.taskTag || DEFAULT_GLOBAL_CONFIG.tsTaskTag,
               tsTaskPattern: legacy.taskPattern || DEFAULT_GLOBAL_CONFIG.tsTaskPattern,
             };
             setConfig(migrated);
@@ -84,7 +81,6 @@ export const GlobalConfigProvider: React.FC<{ children: React.ReactNode }> = ({ 
         userMapping: updated.tsUserMapping,
         meetingTag: updated.tsMeetingTag,
         meetingPattern: updated.tsMeetingPattern,
-        taskTag: updated.tsTaskTag,
         taskPattern: updated.tsTaskPattern,
       });
     } catch (e) {
