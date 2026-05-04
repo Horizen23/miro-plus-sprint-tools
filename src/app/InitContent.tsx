@@ -29,7 +29,7 @@ export default function InitContent() {
       };
 
       // --- Register Custom Actions ---
-      const updateCardStatus = async (card: Card, status: 'to-do' | 'in-progress' | 'done', jiraWithRefresh: (<T>(fn: (s: JiraService) => Promise<T>) => Promise<T>) | null, userInfo: any, myAccountId?: string) => {
+      const updateCardStatus = async (card: Card, status: 'to-do' | 'in-progress' | 'done', jiraWithRefresh: (<T>(fn: (s: JiraService) => Promise<T>) => Promise<T>) | null, userInfo: any, myAccountId?: string, mapping?: any) => {
         const today = new Date().toISOString().split('T')[0];
         const currentMiroUserId = userInfo?.id;
 
@@ -38,14 +38,11 @@ export default function InitContent() {
         let isMe = false;
 
         try {
-          const globalConfig = await (miro.board as any).getAppData("globalConfig") || await (miro.board as any).getAppData("timesheetConfig");
-          const mapping = parseUserMapping(globalConfig?.tsUserMapping || globalConfig?.userMapping || "");
-          
           const tags = await miro.board.get({ type: 'tag' });
           const cardTags = tags.filter(t => (card as any).tagIds?.includes(t.id)).map(t => t.title);
           
-          mappedUserIdentity = getCardMappedUser(cardTags, mapping);
-          isMe = isUserOwnerOfCard(cardTags, mapping, userInfo);
+          mappedUserIdentity = getCardMappedUser(cardTags, mapping || {});
+          isMe = isUserOwnerOfCard(cardTags, mapping || {}, userInfo);
         } catch (e) {}
 
         if (status === 'in-progress') {
@@ -164,20 +161,40 @@ export default function InitContent() {
           }
         };
 
+        // 1. Pre-fetch Config and User Info ONCE
         let myAccountId: string | undefined;
+        let globalMapping: any = {};
+        
         try {
-          const myself = await withRefresh(s => s.getMyself());
+          await notify("🔍 Initializing Jira Sync...", "info");
+          
+          // Get config once
+          const gConfig = await (miro.board as any).getAppData("globalConfig") || await (miro.board as any).getAppData("timesheetConfig");
+          globalMapping = parseUserMapping(gConfig?.tsUserMapping || gConfig?.userMapping || "");
+          
+          // Try to get my account ID, but don't block if it fails
+          const myself = await withRefresh(s => s.getMyself()).catch(e => {
+            console.warn("Could not fetch Jira profile:", e);
+            return null;
+          });
           if (myself) myAccountId = myself.accountId;
-        } catch(e) {}
+        } catch(e) {
+          console.warn("Pre-fetch failed, proceeding with defaults:", e);
+        }
 
         let processedCount = 0;
+        const total = props.items.filter(i => i.type === 'card').length;
+        
         for (const item of props.items) {
           if (item.type === 'card' && item.id) {
-            const success = await updateCardStatus(item as Card, status, withRefresh, userInfo, myAccountId);
+            const success = await updateCardStatus(item as Card, status, withRefresh, userInfo, myAccountId, globalMapping);
             if (success) processedCount++;
           }
         }
-        if (processedCount > 0) await notify(`✅ Marked ${processedCount} item(s) as ${status.toUpperCase()}`);
+        
+        if (processedCount > 0) {
+          await notify(`✅ Successfully updated ${processedCount}/${total} item(s)`, "info");
+        }
       };
 
       await miro.board.ui.on('custom:set-todo', handleSetStatus('to-do'));
