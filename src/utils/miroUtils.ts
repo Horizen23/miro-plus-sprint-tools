@@ -182,6 +182,15 @@ export async function handleCreateRefinementFrame() {
     return;
   }
 
+  // Fetch global config for jiraPrefix
+  let jiraPrefix = process.env.NEXT_PUBLIC_JIRA_PREFIX || 'FTDGENERIC';
+  try {
+    const config = await (miro.board as any).getAppData('globalConfig');
+    if (config?.jiraPrefix) jiraPrefix = config.jiraPrefix;
+  } catch (e) {}
+
+  console.log(jiraPrefix,"jiraPrefix")
+
   const margin = Number(process.env.NEXT_PUBLIC_MIRO_FRAME_MARGIN || 200);
   const newFrames: Frame[] = [];
 
@@ -269,11 +278,20 @@ export async function handleCreateRefinementFrame() {
         const jiraField = card.fields?.find(
           (f: any) => f.tooltip === 'Issue type, Issue key'
         );
-        const issueKey = jiraField?.value;
+        let issueKey = jiraField?.value;
+        let idPart = "";
+
+        if (issueKey && jiraPrefix) {
+          // Extract just the key if it's "Type, Key"
+          const keyOnly = issueKey.includes(',') ? issueKey.split(',').pop()?.trim() || issueKey : issueKey;
+          // Replace prefix
+          idPart = keyOnly.includes('-') ? keyOnly.split('-').pop() || "" : keyOnly;
+          issueKey = `${jiraPrefix}-${idPart}`;
+        }
 
         let jiraTag = null;
         if (issueKey) {
-          const tagName = `jira-${issueKey}`;
+          const tagName = `jira-${idPart || issueKey}`;
           jiraTag = allTags.find((t: any) => t.title === tagName);
           if (!jiraTag) {
             try {
