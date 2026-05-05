@@ -145,7 +145,12 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
         title = title.replace(/^(\s*\[[^\]]*\])+\s*/, '').trim();
 
         // Extract Variables
-        const vars: Record<string, string> = { title, estimate, project: currentConfig.tsDefaultProject };
+        const vars: Record<string, string> = { 
+          title, 
+          estimate, 
+          project: currentConfig.tsDefaultProject,
+          key: "" // Will be populated below
+        };
         const varLines = currentConfig.tsVariables.split('\n');
 
         varLines.forEach(line => {
@@ -174,6 +179,11 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
             } catch (e) {}
           }
         });
+
+        // 🎯 Auto-generate Jira Key: jiraPrefix + tag
+        if (vars.tag && currentConfig.jiraPrefix) {
+          vars.key = `${currentConfig.jiraPrefix}-${vars.tag}`;
+        }
 
         let isMeeting = false;
         try {

@@ -133,11 +133,14 @@ export class JiraService {
     return await response.json();
   }
 
-  async searchIssues(query: string): Promise<any[]> {
-    if (!query || query.length < 2) return [];
+  async searchIssues(query: string, projectKey?: string): Promise<any[]> {
+    if (!query || query.length < 1) return [];
+    
+    // Scoping to project if provided
+    const jql = projectKey ? encodeURIComponent(`project = "${projectKey}"`) : "";
     
     // Using Issue Picker API for better search/autocomplete experience
-    const response = await fetch(`${this.apiBaseUrl.replace('/rest/api/3', '/rest/api/3/issue/picker')}?query=${encodeURIComponent(query)}&currentJql=`, {
+    const response = await fetch(`${this.apiBaseUrl.replace('/rest/api/3', '/rest/api/3/issue/picker')}?query=${encodeURIComponent(query)}&currentJql=${jql}`, {
       headers: {
         Authorization: this.authHeader,
         Accept: "application/json",

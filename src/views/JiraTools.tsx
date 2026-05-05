@@ -74,10 +74,19 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
   // --- Search Logic ---
   React.useEffect(() => {
     const timer = setTimeout(async () => {
-      if (searchQuery.length >= 2) {
+      if (searchQuery.length >= 1) {
         setIsSearching(true);
         try {
-          const results = await withRefresh(s => s.searchIssues(searchQuery));
+          let finalQuery = searchQuery.trim();
+          const prefix = globalConfig?.jiraPrefix || "FTDGENERIC";
+          
+          // Only prepend prefix if it's purely numeric (e.g., 2905 -> FTDGENERIC-2905)
+          if (/^\d+$/.test(finalQuery)) {
+            finalQuery = `${prefix}-${finalQuery}`;
+          }
+          
+          // Pass the prefix to s.searchIssues to scope the search to the project
+          const results = await withRefresh(s => s.searchIssues(finalQuery, prefix));
           setSearchResults(results);
         } catch (e) { } finally { setIsSearching(false); }
       } else { setSearchResults([]); }
@@ -107,6 +116,13 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
         const itemTags = tags.filter(t => itemAny.tagIds?.includes(t.id));
         const jiraTag = itemTags.find(t => t.title.toLowerCase().startsWith('jira-'));
         
+        let detectedParentKey = undefined;
+        if (jiraTag) {
+          const tagValue = jiraTag.title.split('-').slice(1).join('-').toUpperCase();
+          const prefix = globalConfig?.jiraPrefix || "FTDGENERIC";
+          detectedParentKey = tagValue.includes('-') ? tagValue : `${prefix}-${tagValue}`;
+        }
+        
         // Get Metadata for Smart Sync
         let syncedInfo: any = null;
         if (itemAny.getMetadata) {
@@ -121,7 +137,7 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
           startDate: itemAny.startDate,
           dueDate: itemAny.dueDate,
           assigneeId: itemAny.assignee?.userId,
-          detectedParentKey: jiraTag ? jiraTag.title.split('-').slice(1).join('-').toUpperCase() : undefined,
+          detectedParentKey,
           syncedKey: syncedInfo?.key,
           lastSyncedTitle: syncedInfo?.lastTitle,
           x: itemAny.x, y: itemAny.y
@@ -409,7 +425,7 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
           <span className="group-title">Search Parent Issue</span>
           <div style={{position: 'relative'}}>
             <InputField 
-              placeholder="Find parent (e.g. KAN-1)..." 
+              placeholder={`Find parent (e.g. ${globalConfig?.jiraPrefix || 'KAN'}-1)...`} 
               value={searchQuery} 
               onChange={e => setSearchQuery(e.target.value)} 
               style={{paddingRight: '30px'}}

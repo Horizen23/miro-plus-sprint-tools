@@ -93,6 +93,12 @@ export const SettingsView: React.FC = () => {
               value={localConfig.tsVariables}
               onChange={(e) => setLocalConfig({ ...localConfig, tsVariables: e.target.value })}
             />
+            <InputField 
+              label="Jira Prefix (for {key})"
+              value={localConfig.jiraPrefix}
+              onChange={(e) => setLocalConfig({ ...localConfig, jiraPrefix: e.target.value })}
+              placeholder="e.g. FTDGENERIC"
+            />
           </SummaryCard>
         </div>
 

@@ -9,6 +9,7 @@ export interface GlobalConfig {
   tsTaskPattern: string;
   tsUserMapping: string;
   jiraDomain: string;
+  jiraPrefix: string;
 }
 
 export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = {
@@ -20,6 +21,7 @@ export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = {
   tsTaskPattern: "[Task][{tag}] {title}",
   tsUserMapping: "nickname=email@company.com",
   jiraDomain: "",
+  jiraPrefix: process.env.NEXT_PUBLIC_JIRA_PREFIX || "FTDGENERIC",
 };
 
 interface GlobalConfigContextType {
@@ -54,6 +56,7 @@ export const GlobalConfigProvider: React.FC<{ children: React.ReactNode }> = ({ 
               tsMeetingTag: legacy.meetingTag || DEFAULT_GLOBAL_CONFIG.tsMeetingTag,
               tsMeetingPattern: legacy.meetingPattern || DEFAULT_GLOBAL_CONFIG.tsMeetingPattern,
               tsTaskPattern: legacy.taskPattern || DEFAULT_GLOBAL_CONFIG.tsTaskPattern,
+              jiraPrefix: legacy.jiraPrefix || DEFAULT_GLOBAL_CONFIG.jiraPrefix,
             };
             setConfig(migrated);
             await (miro.board as any).setAppData(appDataKey, migrated);
@@ -82,6 +85,7 @@ export const GlobalConfigProvider: React.FC<{ children: React.ReactNode }> = ({ 
         meetingTag: updated.tsMeetingTag,
         meetingPattern: updated.tsMeetingPattern,
         taskPattern: updated.tsTaskPattern,
+        jiraPrefix: updated.jiraPrefix,
       });
     } catch (e) {
       console.error("Failed to save global config:", e);
