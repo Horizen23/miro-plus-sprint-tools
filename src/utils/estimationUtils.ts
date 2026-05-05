@@ -52,61 +52,43 @@ export interface CardTitleData {
  * Pattern: [SEQ][EST] Title
  */
 export const parseCardTitle = (title: string): CardTitleData => {
-  // Deep clean HTML and common entities
   const rawTitle = (title || "")
-    .replace(/<[^>]*>/g, '')
-    .replace(/&nbsp;/g, ' ')
+    .replace(/<[^>]*>/g, '') // Remove HTML tags
+    .replace(/&#39;/g, "'")  // Decode Single Quote
+    .replace(/&quot;/g, '"') // Decode Double Quote
+    .replace(/&amp;/g, '&')  // Decode Ampersand
+    .replace(/&lt;/g, '<')   // Decode Less Than
+    .replace(/&gt;/g, '>')   // Decode Greater Than
+    .replace(/&nbsp;/g, ' ') // Decode Non-breaking Space
     .trim();
-  
 
-  // Optimized pattern:
-  // - Group 1: Sequence (optional, can be empty [])
-  // - Group 2: Estimate (required bracket with numbers/h)
-  // - Group 3: Clean Title
-  const pattern = /^\s*(?:\[([A-Za-z\d.]*)\])?\s*\[(\d+(?:\.\d+)?h?)\]\s*(.*)$/;
+  // Optimized pattern: [SEQ][EST] Title
+  const pattern = /^\s*(?:\[([A-Za-z\d.]*)\])?\s*\[(\d+(?:\.\d+)?h?|\?)\]\s*(.*)$/;
   const match = rawTitle.match(pattern);
 
   if (match) {
-    const res = {
-      // If match[1] is undefined, the first bracket was missing.
-      // If it's a string (even empty), the bracket was present.
-      seq: match[1] === undefined ? (null as any) : match[1],
+    return {
+      seq: match[1] === undefined ? "" : match[1],
       estimate: match[2] || "",
       cleanTitle: match[3] || ""
     };
-    return res;
   }
 
-  // Fallback 1: Only one bracket (Assume it's estimate if it's numeric/h)
-  const singleBracketPattern = /^\s*\[(\d+(?:\.\d+)?h?)\]\s*(.*)$/;
+  // Fallback 1: Only one bracket (Assume it's estimate if it's numeric/h/?)
+  const singleBracketPattern = /^\s*\[(\d+(?:\.\d+)?h?|\?)\]\s*(.*)$/;
   const singleMatch = rawTitle.match(singleBracketPattern);
   if (singleMatch) {
-    const res = {
-      seq: "",
-      estimate: singleMatch[1] || "",
-      cleanTitle: singleMatch[2] || ""
-    };
-    return res;
+    return { seq: "", estimate: singleMatch[1] || "", cleanTitle: singleMatch[2] || "" };
   }
 
   // Fallback 2: Sequence only (e.g. [A1.0] Task)
   const seqOnlyPattern = /^\s*\[([A-Za-z]+\d+(?:\.\d+)?)\]\s*(.*)$/;
   const seqMatch = rawTitle.match(seqOnlyPattern);
   if (seqMatch) {
-    const res = {
-      seq: seqMatch[1] || "",
-      estimate: "",
-      cleanTitle: seqMatch[2] || ""
-    };
-    return res;
+    return { seq: seqMatch[1] || "", estimate: "", cleanTitle: seqMatch[2] || "" };
   }
 
-  const res = {
-    seq: "",
-    estimate: "",
-    cleanTitle: rawTitle
-  };
-  return res;
+  return { seq: "", estimate: "", cleanTitle: rawTitle };
 };
 
 /**

@@ -136,13 +136,16 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
         if (!grouped[dateStr]) grouped[dateStr] = [];
         
         let rawTitle = c.title || "Untitled Card";
-        const strippedTitle = rawTitle.replace(/<[^>]*>/g, '').trim();
+        const strippedTitle = rawTitle; // parseCardTitle will handle the heavy cleaning
         
-        // Use central parser to get clean title
-        const { cleanTitle: title } = parseCardTitle(strippedTitle);
+        // Use central parser to get clean title and estimate
+        let { cleanTitle: title, estimate } = parseCardTitle(strippedTitle);
+        
+        // For Timesheet ONLY: aggressively strip any remaining leading brackets from the title
+        title = title.replace(/^(\s*\[[^\]]*\])+\s*/, '').trim();
 
         // Extract Variables
-        const vars: Record<string, string> = { title, project: currentConfig.tsDefaultProject };
+        const vars: Record<string, string> = { title, estimate, project: currentConfig.tsDefaultProject };
         const varLines = currentConfig.tsVariables.split('\n');
 
         varLines.forEach(line => {
@@ -225,6 +228,17 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
     setTimeout(() => setCopying(false), 2000);
   };
 
+  const handleCopyJson = () => {
+    const flatData: { date: string, title: string, cardId: string }[] = [];
+    Object.entries(timesheet).forEach(([date, items]) => {
+      items.forEach(item => {
+        flatData.push({ date, title: item.title, cardId: item.cardId });
+      });
+    });
+    
+    copyToClipboard(JSON.stringify(flatData));
+  };
+
   const handleCopyDay = (date: string, dayItems: { title: string }[]) => {
     const dateObj = new Date(date);
     const thaiDate = dateObj.toLocaleDateString('th-TH', { 
@@ -298,18 +312,27 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
               </svg>
               Preview
             </h2>
-            <Button 
-              variant="copy" 
-              className={copying ? 'success' : ''} 
-              onClick={handleCopyAll}
-              icon={copying ? (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-              ) : null}
-            >
-              {copying ? 'Copied!' : 'Copy All'}
-            </Button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <Button 
+                variant="secondary"
+                onClick={handleCopyJson}
+                style={{ height: '32px', fontSize: '11px', padding: '0 8px' }}
+              >
+                Copy JSON
+              </Button>
+              <Button 
+                variant="copy" 
+                className={copying ? 'success' : ''} 
+                onClick={handleCopyAll}
+                icon={copying ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                ) : null}
+              >
+                {copying ? 'Copied!' : 'Copy All'}
+              </Button>
+            </div>
           </div>
           
           <div className="timesheet-list">
