@@ -17,16 +17,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        <Script
-          src="https://miro.com/app/static/sdk/v2/miro.js"
-          strategy="beforeInteractive"
-        />
       </head>
       <body>
         <div id="root">
-          <Providers>
-            {children}
-          </Providers>
+          {children}
         </div>
       </body>
     </html>

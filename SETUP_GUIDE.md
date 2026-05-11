@@ -79,6 +79,17 @@ If you prefer to use your own Socket.io server:
 
 ---
 
+## 3. App Distribution (Making it Public)
+1.  **Enable Sharing**: In Atlassian Console, go to **Distribution** menu.
+2.  **Edit Controls**: Click 'Edit' and select **Sharing**.
+3.  **Provide URLs**: Use the following (replace with your production domain):
+    *   **Privacy Policy**: `https://<your-domain>/privacy`
+    *   **Terms of Service**: `https://<your-domain>/terms`
+    *   **Support Email**: `com100pb@gmail.com`
+4.  **Save & Install**: Once saved, go to **Authorization** > **OAuth 2.0 (3LO)** to get your unique **Authorization URL** to share with others.
+
+---
+
 ## 🏗️ Build & Run (Local)
 ```bash
 # Install dependencies
@@ -91,4 +102,4 @@ npm run dev
 ---
 
 > [!IMPORTANT]
-> **Security Note:** Ensure `JIRA_CLIENT_SECRET` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` are configured in your deployment platform's dashboard and never committed to version control.
+> **Security Note:** Ensure `JIRA_CLIENT_SECRET` is configured in your deployment platform's dashboard and never committed to version control.
