@@ -104,7 +104,7 @@ body {
 #root {
   width: 100%;
   height: 100%;
-  overflow: hidden;
+  overflow: auto;
 }
 
 img {
@@ -1058,6 +1058,7 @@ textarea.form-input {
 .cal-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 11px; font-weight: 700; color: #050038; text-transform: uppercase; letter-spacing: 0.5px; }
 .cal-nav button { background: #f0f2ff; border: none; width: 24px; height: 24px; border-radius: 50%; font-size: 14px; color: #4262ff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
 .cal-nav button:hover { background: #4262ff; color: #fff; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; background: #f0f0f0; border: 1px solid #f0f0f0; border-radius: 4px; overflow: hidden; }
 .cal-weekday { font-size: 8px; font-weight: 700; color: #999; text-align: center; padding: 4px 0; background: #fff; }
 .cal-day { font-size: 10px; font-weight: 600; color: #333; text-align: center; padding: 8px 0; cursor: pointer; background: #fff; position: relative; transition: all 0.2s; }
 .cal-day:hover { background: #f8f9ff; color: #4262ff; }
