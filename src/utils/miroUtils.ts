@@ -250,10 +250,11 @@ export async function handleCreateRefinementFrame() {
       // Define the Simplified Workflow (TA for Test)
       const workflow = [
         // Track T: Test (Single TA Group)
-        { title: 'QA Review Test Checklist', seq: 'TA1.00', estimate: '0h', track: 'T', color: '#f16d6d' },
+        { title: 'QA Checklist File', seq: 'TA1.00', estimate: '0h', track: 'T', color: '#f16d6d' },
         { title: 'Test Frame', seq: 'TA2.00', estimate: '0h', track: 'T', color: '#f16d6d' },
         { title: 'Excecute Checklist', seq: 'TA3.00', estimate: '0h', track: 'T', color: '#f16d6d' },
-        { title: 'QA Test Frame Scenario Testcase', seq: 'TA4.00', estimate: '0h', track: 'T', color: '#f16d6d' },
+        { title: 'QA Review Test Checklist', seq: 'TA4.00', estimate: '0h', track: 'T', color: '#f16d6d' },
+        { title: 'QA Test Frame Scenario Testcase', seq: 'TA5.00', estimate: '0h', track: 'T', color: '#f16d6d' },
       ];
 
       const trackA: any[] = []; // Dev track now handled by the main card
