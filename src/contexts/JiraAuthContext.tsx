@@ -1,16 +1,13 @@
 import * as React from "react";
 import { JiraConfig, JiraService } from "../utils/jiraService";
+import { RealtimeFactory } from "../services/realtime/factory";
 
 const CLIENT_ID = process.env.NEXT_PUBLIC_JIRA_CLIENT_ID || "";
+const realtimeService = RealtimeFactory.getInstance();
+
 const getRedirectUri = () => {
   if (typeof window === 'undefined') return '';
-  
-  // 1. Priority: Use explicit redirect URI from .env if provided
-  if (process.env.NEXT_PUBLIC_JIRA_REDIRECT_URI) {
-    return process.env.NEXT_PUBLIC_JIRA_REDIRECT_URI;
-  }
-
-  // 2. Fallback: Use current page URL (e.g. http://localhost:3000/panel)
+  if (process.env.NEXT_PUBLIC_JIRA_REDIRECT_URI) return process.env.NEXT_PUBLIC_JIRA_REDIRECT_URI;
   return window.location.origin + window.location.pathname;
 };
 
@@ -42,6 +39,7 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, []);
 
   const handleTokenExchange = async (code: string) => {
+    console.log("[JiraAuth] Starting token exchange for code:", code.substring(0, 10) + "...");
     setIsAuthenticating(true);
     try {
       const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
@@ -53,10 +51,20 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           redirect_uri: getRedirectUri() 
         }), 
       });
+
+      if (!resp.ok) {
+        const errText = await resp.text();
+        console.error("[JiraAuth] Token exchange failed:", errText);
+        throw new Error("Failed to exchange token");
+      }
+
       const data = await resp.json();
+      console.log("[JiraAuth] Token exchange successful!");
+      
       const svc = new JiraService({ ...config, authType: 'oauth', accessToken: data.access_token });
       const res = await svc.getAccessibleResources(data.access_token);
       if (res && res.length > 0) {
+        console.log("[JiraAuth] Found accessible resources:", res.length);
         const newCfg: JiraConfig = { 
           ...config, 
           authType: 'oauth', 
@@ -70,36 +78,44 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         localStorage.setItem(configKey, JSON.stringify(newCfg)); 
       }
     } catch (e) { 
-      console.error(e); 
+      console.error("[JiraAuth] Error in handleTokenExchange:", e); 
     } finally { 
       setIsAuthenticating(false); 
     }
   };
 
   React.useEffect(() => {
-    // 1. Popup Handler: If we have a code and an opener, we are the OAuth popup
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
-    const state = params.get('state');
+
+    // --- Main App Logic (Miro Panel) ---
+    realtimeService.connect();
+    const currentState = localStorage.getItem(process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_STATE_KEY || "jira_auth_state");
     
-    if (code && window.opener) {
-      window.opener.postMessage({ type: 'JIRA_AUTH_CODE', code, state }, window.location.origin);
-      window.close();
-      return;
+    if (currentState && !code) {
+      console.log("[JiraAuthProvider] Main app detected. Subscribing to auth channel:", currentState);
+      realtimeService.subscribeToAuth(currentState, (authCode: string) => {
+        console.log("[JiraAuthProvider] Code received via subscription!");
+        const stateKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_STATE_KEY || "jira_auth_state";
+        
+        if (localStorage.getItem(stateKey) === currentState) {
+          localStorage.removeItem(stateKey);
+          handleTokenExchange(authCode);
+        }
+      });
     }
 
-    // 2. Main Window Handler: Listen for messages from the popup
     const handleMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
       if (event.data?.type === 'JIRA_AUTH_CODE') {
-        const { code, state: returnedState } = event.data;
+        const { code: mCode, state: mState } = event.data;
         const stateKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_STATE_KEY || "jira_auth_state";
-        if (returnedState === localStorage.getItem(stateKey)) { 
-          handleTokenExchange(code); 
+        if (mState === localStorage.getItem(stateKey)) { 
+          handleTokenExchange(mCode); 
           localStorage.removeItem(stateKey); 
         }
       }
     };
+
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, [config]);
@@ -113,22 +129,33 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const stateKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_STATE_KEY || "jira_auth_state";
     localStorage.setItem(stateKey, state);
     
-    // Clean up scope (remove quotes if present)
+    console.log("[JiraAuth] Starting OAuth with state:", state);
+    
+    // Listen for this specific session
+    realtimeService.subscribeToAuth(state, (authCode: string) => {
+      console.log("[JiraAuth] Code received for state:", state);
+      
+      const savedState = localStorage.getItem(stateKey);
+      
+      // Check if this is still the state we are waiting for
+      if (savedState === state) {
+        // --- CRITICAL: Clear state immediately to prevent duplicate exchange on refresh ---
+        localStorage.removeItem(stateKey);
+        handleTokenExchange(authCode);
+      } else {
+        console.warn("[JiraAuth] State mismatch or already processed. Ignoring signal.");
+      }
+    });
+
     const rawScope = process.env.NEXT_PUBLIC_JIRA_SCOPE || "read:jira-work write:jira-work manage:jira-project-config read:jira-user read:me offline_access";
     const cleanScope = rawScope.replace(/['"]/g, '');
     const scope = encodeURIComponent(cleanScope);
-    
-    const audience = process.env.NEXT_PUBLIC_JIRA_AUDIENCE;
     const authUrl = process.env.NEXT_PUBLIC_JIRA_AUTH_URL || "https://auth.atlassian.com";
     const redirectUri = getRedirectUri();
     
-    let url = `${authUrl}/authorize?client_id=${CLIENT_ID}&scope=${scope}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}&response_type=code`;
-    
-    if (audience) {
-      url += `&audience=${encodeURIComponent(audience)}`;
-    }
-    
-    url += `&prompt=consent`;
+    let url = `${authUrl}/authorize?client_id=${CLIENT_ID}&scope=${scope}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}&response_type=code&prompt=consent`;
+    const audience = process.env.NEXT_PUBLIC_JIRA_AUDIENCE;
+    if (audience) url += `&audience=${encodeURIComponent(audience)}`;
 
     window.open(url, 'JiraAuth', 'width=600,height=800');
   };

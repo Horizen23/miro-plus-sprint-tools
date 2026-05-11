@@ -77,6 +77,18 @@ app.prepare().then(() => {
       }
     });
 
+    // --- Jira Auth Bridge ---
+    socket.on("join-auth", (state: string) => {
+      console.log(`Server: Client ${socket.id} joining auth room: auth-${state}`);
+      socket.join(`auth-${state}`);
+    });
+
+    socket.on("complete-auth", ({ state, code }) => {
+      console.log(`Server: Auth completed for state ${state}. Broadcasting to room...`);
+      // Broadcast specifically to the room where the Miro App is waiting
+      io.to(`auth-${state}`).emit("auth-success", { state, code });
+    });
+
     socket.on("disconnect", () => {
       console.log("Client disconnected:", socket.id);
     });
