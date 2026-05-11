@@ -26,7 +26,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
         <h3 style={{ margin: 0 }}>
           {icon}
-          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</span>
+          <span style={{ lineHeight: '1.4', wordBreak: 'break-word' }}>{title}</span>
         </h3>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

@@ -58,7 +58,6 @@ export default function VotingContent() {
   }
 
   return (
-    <div className="container" style={{ padding: '12px' }}>
       <VotingSession
         votingSession={votingSession}
         handleResetVoting={handleResetVoting}
@@ -72,6 +71,5 @@ export default function VotingContent() {
         onlineUsersCount={onlineUsersCount}
         isModal={true}
       />
-    </div>
   );
 }
