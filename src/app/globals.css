@@ -85,6 +85,7 @@
 
 html, body {
   height: 100%;
+  overflow: hidden;
   margin: 0 !important;
   padding: 0 !important;
 }
@@ -103,6 +104,7 @@ body {
 #root {
   width: 100%;
   height: 100%;
+  overflow: hidden;
 }
 
 img {
@@ -161,6 +163,7 @@ img {
 .timesheet-section { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
 .section-title { font-size: 13px; font-weight: 700; color: #050038; display: flex; align-items: center; gap: 6px; margin: 0; }
 .timesheet-list { display: flex; flex-direction: column; gap: 8px; }
+.timesheet-group { background: #fff; border: 1px solid #eaeaeb; border-radius: 10px; overflow: hidden; }
 .date-header { background: #f8f9ff; padding: 8px 12px; border-bottom: 1px solid #eaeaeb; display: flex; align-items: center; justify-content: space-between; }
 .date-value { font-size: 12px; font-weight: 700; color: #4262ff; }
 .card-count { font-size: 10px; font-weight: 600; color: #666; background: #fff; padding: 1px 6px; border-radius: 8px; border: 1px solid #e0e0e0; }
@@ -223,6 +226,7 @@ img {
 }
 
 .tab-text {
+  overflow: hidden;
   text-overflow: ellipsis;
 }
 
@@ -508,45 +512,47 @@ textarea.form-input {
   border-color: #fff;
 }
 /* Voting Styles */
-.voting-container, .voting-modal-container { 
+.voting-container { display: flex; flex-direction: column; gap: 8px; }
+.voting-modal-container { 
   display: flex; 
   flex-direction: column; 
   height: 100%;
   max-height: 100%;
+  overflow: hidden;
   background: #ffffff;
   padding: 0;
 }
 .voting-modal-container::-webkit-scrollbar {
   display: none; /* Chrome/Safari/Webkit */
 }
+.voting-card { 
+  display: grid; 
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+  padding: 0;
+  background: white;
+  position: relative;
+  overflow: hidden;
+}
 .voting-header { 
   border-bottom: 1px solid #f0f1f5; 
   padding-bottom: 8px;
-  margin-bottom: 8px;
-  flex-shrink: 0;
+  position: relative; 
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
-.voting-badge-status, .badge-success, .badge-error, .badge-warning { 
-  font-size: 9px; 
+.voting-badge-status { 
+  font-size: 8px; 
   text-transform: uppercase; 
   font-weight: 800; 
-  padding: 2px 8px; 
-  border-radius: 6px; 
+  padding: 1px 6px; 
+  border-radius: 4px; 
+  background: #4262ff; 
   color: white; 
-  letter-spacing: 0.5px;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
 }
-
-.voting-badge-status { background: #4262ff; box-shadow: 0 2px 6px rgba(66, 98, 255, 0.2); }
-.badge-success { background: #10b981; box-shadow: 0 2px 6px rgba(16, 185, 129, 0.2); }
-.badge-error { background: #ef4444; box-shadow: 0 2px 6px rgba(239, 68, 68, 0.2); }
-.badge-warning { background: #f59e0b; box-shadow: 0 2px 6px rgba(245, 158, 11, 0.2); }
 .voting-header h3 { font-size: 13px; font-weight: 700; color: #050038; margin: 0; line-height: 1.4; text-transform: none; letter-spacing: normal; }
+.voting-body { display: flex; flex-direction: column; gap: 12px; }
 .voting-hint { font-size: 11px; color: #8c90b0; margin-bottom: 4px; }
 .voting-card-buttons {
   display: grid;

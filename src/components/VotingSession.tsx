@@ -44,7 +44,7 @@ export const VotingSession: React.FC<VotingSessionProps> = ({
 
   if (!votingSession) return null;
 
-  const participantsList = React.useMemo(() => Object.keys(votingSession.votes || {}), [votingSession.votes]);
+  const participantsList = Array.from(new Set([...(votingSession.participants || []), ...Object.keys(votingSession.votes)]));
   const totalParticipants = participantsList.length;
   const votedCount = Object.keys(votingSession.votes).length;
   const progressWidth = Math.min(100, (votedCount / Math.max(1, totalParticipants)) * 100);
@@ -88,7 +88,7 @@ export const VotingSession: React.FC<VotingSessionProps> = ({
               <div className="voting-card-buttons">
                 {(estimateUnit === 'pt' 
                   ? ['1', '2', '3', '5', '8', '13', '21', '34', '55', '89', '144', '233', '377', '?']
-                  : [...Array.from({ length: 40 }, (_, i) => `${i + 1}h`), '?']
+                  : [...Array.from({ length: 17 }, (_, i) => `${i + 1}h`), '?']
                 ).map(p => (
                   <button 
                     key={p} 
