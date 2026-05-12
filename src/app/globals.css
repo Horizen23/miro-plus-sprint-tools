@@ -546,10 +546,25 @@ textarea.form-input {
   font-size: 8px; 
   text-transform: uppercase; 
   font-weight: 800; 
-  padding: 1px 6px; 
+  padding: 2px 8px; 
   border-radius: 4px; 
   background: #4262ff; 
-  color: white; 
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+.badge-success {
+  font-size: 8px;
+  text-transform: uppercase;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #10b981;
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
 }
 .voting-header h3 { font-size: 13px; font-weight: 700; color: #050038; margin: 0; line-height: 1.4; text-transform: none; letter-spacing: normal; }
 .voting-body { display: flex; flex-direction: column; gap: 12px; }
@@ -787,6 +802,7 @@ textarea.form-input {
   flex: 1;
   padding: 4px;
   min-height: 0;
+  align-content: start;
 }
 
 .voters-list {

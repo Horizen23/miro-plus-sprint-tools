@@ -216,8 +216,7 @@ export const VotingSession: React.FC<VotingSessionProps> = ({
                     style={{ 
                       cursor: isFacilitator && vote !== '-' && vote !== '?' ? 'pointer' : 'default',
                       position: 'relative',
-                      minHeight: '100px',
-                      padding: '12px 8px'
+                      padding: '10px 8px'
                     }}
                   >
                     
