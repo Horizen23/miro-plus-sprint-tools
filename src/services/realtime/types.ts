@@ -15,7 +15,8 @@ export interface RealtimeService {
   updateState(cardId: string, state: VotingState): void;
   castVote(cardId: string, userId: string, vote: string): void;
   endSession(cardId: string): void;
-  onStateUpdate(callback: RealtimeCallback): void;
+  /** Returns an unsubscribe function to remove this specific listener */
+  onStateUpdate(callback: RealtimeCallback): () => void;
   
   // Auth Signaling
   joinAuth(state: string): void;

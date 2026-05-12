@@ -77,9 +77,21 @@ export function useVotingSession(
           return prevSession;
         }
 
-        // Handle updates for current session
+        // Handle updates for current session — MERGE participants to prevent race conditions
         if (prevSession && state.cardId === prevSession.cardId) {
-          return state;
+          const mergedParticipants = Array.from(new Set([
+            ...(prevSession.participants || []),
+            ...(state.participants || [])
+          ]));
+          const mergedUserNames = {
+            ...(prevSession.userNames || {}),
+            ...(state.userNames || {})
+          };
+          return {
+            ...state,
+            participants: mergedParticipants,
+            userNames: mergedUserNames
+          };
         }
         
         // Discover NEW session
@@ -91,10 +103,9 @@ export function useVotingSession(
       });
     };
 
-    realtime.onStateUpdate(handleUpdate as any);
+    const unsub = realtime.onStateUpdate(handleUpdate as any);
     return () => {
-      // Note: We don't necessarily want to disconnect on every re-render, 
-      // the factory manages the instance.
+      unsub(); // Remove this specific listener on cleanup (factory manages the connection)
     };
   }, [votingSession?.cardId, currentUserId]);
 
@@ -109,12 +120,27 @@ export function useVotingSession(
           const votingMetaKey = process.env.NEXT_PUBLIC_MIRO_METADATA_VOTING_KEY || "plus-sprint-tools";
           const metadata = await card.getMetadata(votingMetaKey) as VotingSession | null;
           if (metadata && (metadata.status === 'voting' || metadata.status === 'revealed')) {
-            // Update local state immediately
-            setVotingSession(metadata);
+            // Merge participants from local state + card metadata to avoid overwriting concurrent joins
+            const mergedParticipants = Array.from(new Set([
+              ...(votingSessionRef.current?.participants || []),
+              ...(metadata.participants || [])
+            ]));
+            const mergedUserNames = {
+              ...(votingSessionRef.current?.userNames || {}),
+              ...(metadata.userNames || {})
+            };
+            const mergedState = {
+              ...metadata,
+              participants: mergedParticipants,
+              userNames: mergedUserNames
+            };
+
+            // Update local state with merged data
+            setVotingSession(mergedState);
             
-            // Ensure realtime server has this state (in case of server restart/lost memory)
+            // Ensure realtime server has the merged state
             const realtime = RealtimeFactory.getInstance();
-            realtime.updateState(metadata.cardId, metadata as any);
+            realtime.updateState(metadata.cardId, mergedState as any);
             
             // Notification trigger for others
             if (metadata.status === 'voting' && lastSessionId.current !== metadata.cardId) {
@@ -174,8 +200,13 @@ export function useVotingSession(
 
   React.useEffect(() => {
     syncVotingSession();
-    // Only sync on mount. Updates will be handled by Socket.io or manual actions.
-  }, []); // Run once on mount
+
+    // Periodic auto-sync: re-read card metadata every 5s to self-heal dropped broadcasts
+    if (votingSession?.cardId && votingSession.status === 'voting') {
+      const interval = setInterval(syncVotingSession, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [votingSession?.cardId, votingSession?.status]);
 
   // Separate, slow interval for online users (Doesn't need to be frequent)
   React.useEffect(() => {
@@ -302,8 +333,20 @@ export function useVotingSession(
           const currentMetadata = await card.getMetadata(votingMetaKey) as VotingSession;
           const currentSession = currentMetadata || votingSession;
           
+          // Merge participants from local state + card to prevent overwriting concurrent joins
+          const mergedParticipants = Array.from(new Set([
+            ...(votingSessionRef.current?.participants || []),
+            ...(currentSession.participants || [])
+          ]));
+          const mergedUserNames = {
+            ...(votingSessionRef.current?.userNames || {}),
+            ...(currentSession.userNames || {})
+          };
+
           const updatedSession = {
             ...currentSession,
+            participants: mergedParticipants,
+            userNames: mergedUserNames,
             votes: {
               ...currentSession.votes
             }
@@ -318,9 +361,9 @@ export function useVotingSession(
           await card.setMetadata(votingMetaKey, updatedSession);
           setVotingSession(updatedSession);
           
-          // Emit vote via realtime for instant sync
+          // Broadcast full state via realtime for instant sync
           const realtime = RealtimeFactory.getInstance();
-          realtime.castVote(votingSession.cardId, currentUserId, points);
+          realtime.updateState(votingSession.cardId, updatedSession as any);
           
           success = true;
         } catch (retryError) {

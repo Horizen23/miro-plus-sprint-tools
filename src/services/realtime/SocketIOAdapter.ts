@@ -3,17 +3,18 @@ import { RealtimeService, VotingState, RealtimeCallback } from "./types";
 
 export class SocketIOAdapter implements RealtimeService {
   private socket: Socket | null = null;
-  private callback: RealtimeCallback | null = null;
+  private callbacks = new Set<RealtimeCallback>();
 
   constructor(private url: string) {}
 
   connect() {
-    if (this.socket?.connected) return;
+    // Guard: check existence, not just connected state — prevents duplicate during connecting phase
+    if (this.socket) return;
     
     this.socket = io(this.url);
     
     this.socket.on("voting-state-updated", (state: VotingState) => {
-      if (this.callback) this.callback(state);
+      this.notifyAll(state);
     });
   }
 
@@ -48,8 +49,15 @@ export class SocketIOAdapter implements RealtimeService {
     this.safeEmit("end-voting-session", cardId);
   }
 
-  onStateUpdate(callback: RealtimeCallback) {
-    this.callback = callback;
+  /**
+   * Register a state update listener.
+   * Returns an unsubscribe function to remove this specific listener.
+   */
+  onStateUpdate(callback: RealtimeCallback): () => void {
+    this.callbacks.add(callback);
+    return () => {
+      this.callbacks.delete(callback);
+    };
   }
 
   joinAuth(state: string) {
@@ -74,5 +82,16 @@ export class SocketIOAdapter implements RealtimeService {
     };
     this.socket?.on("auth-success", handler);
     return handler;
+  }
+
+  /** Notify all registered callbacks */
+  private notifyAll(state: VotingState) {
+    for (const cb of this.callbacks) {
+      try {
+        cb(state);
+      } catch (e) {
+        console.error('[SocketIOAdapter] Callback error:', e);
+      }
+    }
   }
 }
