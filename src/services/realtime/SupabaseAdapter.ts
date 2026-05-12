@@ -19,11 +19,12 @@ export class SupabaseAdapter implements RealtimeService {
     this.client = createClient(url, key);
   }
 
-  connect() {
-    // Suggestion 2: Guard — prevent double-connect
+  connect(boardId?: string) {
+    // Guard — prevent double-connect
     if (this.channel) return;
 
-    this.channel = this.client.channel('voting-room', {
+    const roomName = boardId ? `voting-room-${boardId}` : 'voting-room';
+    this.channel = this.client.channel(roomName, {
       config: {
         broadcast: { self: true },
       },

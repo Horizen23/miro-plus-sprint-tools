@@ -4,15 +4,24 @@ import { RealtimeService, VotingState, RealtimeCallback } from "./types";
 export class SocketIOAdapter implements RealtimeService {
   private socket: Socket | null = null;
   private callbacks = new Set<RealtimeCallback>();
+  private boardId: string | null = null;
 
   constructor(private url: string) {}
 
-  connect() {
+  connect(boardId?: string) {
     // Guard: check existence, not just connected state — prevents duplicate during connecting phase
     if (this.socket) return;
     
+    this.boardId = boardId || null;
     this.socket = io(this.url);
     
+    // Join board-specific room
+    if (this.boardId) {
+      this.socket.on("connect", () => {
+        this.socket?.emit("join-board", this.boardId);
+      });
+    }
+
     this.socket.on("voting-state-updated", (state: VotingState) => {
       this.notifyAll(state);
     });

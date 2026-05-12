@@ -267,7 +267,12 @@ export default function InitContent() {
         console.warn("Failed to register custom actions", e);
       }
       const realtime = RealtimeFactory.getInstance();
-      realtime.connect();
+      try {
+        const boardInfo = await miro.board.getInfo();
+        realtime.connect(boardInfo.id);
+      } catch {
+        realtime.connect();
+      }
 
 
       let activeModalCardId: string | null = null;

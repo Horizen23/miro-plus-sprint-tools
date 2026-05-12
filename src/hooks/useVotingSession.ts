@@ -58,12 +58,22 @@ export function useVotingSession(
   // Realtime Integration (Adapter Pattern)
   React.useEffect(() => {
     const realtime = RealtimeFactory.getInstance();
-    realtime.connect();
 
-    // Join room if we have a session
-    if (votingSession?.cardId && currentUserId) {
-      realtime.joinSession(votingSession.cardId, currentUserId);
-    }
+    // Async setup: fetch boardId and connect
+    const setup = async () => {
+      try {
+        const boardInfo = await miro.board.getInfo();
+        realtime.connect(boardInfo.id);
+      } catch {
+        realtime.connect(); // fallback without boardId
+      }
+
+      // Join room if we have a session
+      if (votingSession?.cardId && currentUserId) {
+        realtime.joinSession(votingSession.cardId, currentUserId);
+      }
+    };
+    setup();
 
     const handleUpdate = (state: VotingSession) => {
       

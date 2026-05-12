@@ -9,7 +9,7 @@ export interface VotingState {
 export type RealtimeCallback = (state: VotingState) => void;
 
 export interface RealtimeService {
-  connect(): void;
+  connect(boardId?: string): void;
   disconnect(): void;
   joinSession(cardId: string, userId: string): void;
   updateState(cardId: string, state: VotingState): void;

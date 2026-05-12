@@ -30,6 +30,24 @@ app.prepare().then(() => {
   io.on("connection", (socket) => {
     console.log("Client connected:", socket.id);
 
+    // Track which board this socket belongs to
+    let currentBoardId: string | null = null;
+
+    socket.on("join-board", (boardId: string) => {
+      currentBoardId = boardId;
+      socket.join(`board-${boardId}`);
+      console.log(`Client ${socket.id} joined board: ${boardId}`);
+    });
+
+    // Helper: emit to board room or globally (fallback for clients without boardId)
+    const emitToBoard = (event: string, data: any) => {
+      if (currentBoardId) {
+        io.to(`board-${currentBoardId}`).emit(event, data);
+      } else {
+        io.emit(event, data);
+      }
+    };
+
     socket.on("join-session", ({ cardId, userId }) => {
       socket.join(`session-${cardId}`);
       
@@ -41,8 +59,7 @@ app.prepare().then(() => {
         // Sync with voting session object
         if (votingSessions[cardId]) {
           votingSessions[cardId].participants = Array.from(participants[cardId]);
-          // Broadcast updated session with participant list to everyone
-          io.emit("voting-state-updated", votingSessions[cardId]);
+          emitToBoard("voting-state-updated", votingSessions[cardId]);
         }
       }
 
@@ -56,24 +73,21 @@ app.prepare().then(() => {
       console.log(`Server: Updating voting state for card ${cardId} to status: ${state.status}`);
       console.log(`Server: Votes: ${Object.keys(state.votes || {}).length}, Participants: ${state.participants?.length || 0}`);
       votingSessions[cardId] = state;
-      // Broadcast to everyone (including background clients for discovery)
-      io.emit("voting-state-updated", state);
+      emitToBoard("voting-state-updated", state);
     });
 
     socket.on("end-voting-session", (cardId: string) => {
       console.log(`Server: Ending voting session for card ${cardId}`);
       delete votingSessions[cardId];
       delete participants[cardId];
-      // Broadcast null to everyone so they clear their local state
-      io.emit("voting-state-updated", { cardId, status: null });
+      emitToBoard("voting-state-updated", { cardId, status: null });
     });
 
     socket.on("cast-vote", ({ cardId, userId, vote }) => {
       if (votingSessions[cardId]) {
         if (!votingSessions[cardId].votes) votingSessions[cardId].votes = {};
         votingSessions[cardId].votes[userId] = vote;
-        // Global broadcast to ensure background apps also sync
-        io.emit("voting-state-updated", votingSessions[cardId]);
+        emitToBoard("voting-state-updated", votingSessions[cardId]);
       }
     });
 
