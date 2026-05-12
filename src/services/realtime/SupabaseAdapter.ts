@@ -134,7 +134,9 @@ export class SupabaseAdapter implements RealtimeService {
         }
       })
       .subscribe();
-    return channel;
+    return () => {
+      this.cleanupAuthChannel(state);
+    };
   }
 
   // --- Private helpers ---

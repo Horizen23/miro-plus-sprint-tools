@@ -289,7 +289,7 @@ export function useVotingSession(
       const card = selectedItems[0] as any;
       const newSession: VotingSession = {
         cardId: card.id,
-        cardTitle: (card.title || "").replace(/<[^>]*>/g, ''),
+        cardTitle: (card.title || "").replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' '),
         status: 'voting',
         votes: {},
         participants: [currentUserId],

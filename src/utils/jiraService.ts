@@ -10,6 +10,74 @@ export interface JiraConfig {
   authType: 'basic' | 'oauth';
 }
 
+// Helper to convert Plain Text (with newlines, links, and bullets) to Jira ADF
+export function textToADF(text: string) {
+
+  const content: any[] = [];
+  const lines = text.split('\n');
+
+  let currentList: any = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (currentList) { content.push(currentList); currentList = null; }
+      content.push({ type: "paragraph", content: [] });
+      continue;
+    }
+
+    const isBullet = trimmed.startsWith('- ') || trimmed.startsWith('* ');
+    const isNumbered = /^\d+\.\s/.test(trimmed);
+
+    const inlineContent: any[] = [];
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    let lastIndex = 0;
+    let match;
+
+    while ((match = urlRegex.exec(line)) !== null) {
+      if (match.index > lastIndex) {
+        let textPart = line.substring(lastIndex, match.index);
+        if (lastIndex === 0 && (isBullet || isNumbered)) textPart = textPart.replace(/^[-*]\s|^\d+\.\s/, '');
+        if (textPart) inlineContent.push({ type: "text", text: textPart });
+      }
+      inlineContent.push({
+        type: "text",
+        text: match[0],
+        marks: [{ type: "link", attrs: { href: match[0] } }]
+      });
+      lastIndex = urlRegex.lastIndex;
+    }
+
+    if (lastIndex < line.length) {
+      let textPart = line.substring(lastIndex);
+      if (lastIndex === 0 && (isBullet || isNumbered)) textPart = textPart.replace(/^[-*]\s|^\d+\.\s/, '');
+      if (textPart) inlineContent.push({ type: "text", text: textPart });
+    }
+
+    if (isBullet) {
+      if (!currentList || currentList.type !== 'bulletList') {
+        if (currentList) content.push(currentList);
+        currentList = { type: 'bulletList', content: [] };
+      }
+      currentList.content.push({ type: 'listItem', content: [{ type: 'paragraph', content: inlineContent.length ? inlineContent : [] }] });
+    } else if (isNumbered) {
+      if (!currentList || currentList.type !== 'orderedList') {
+        if (currentList) content.push(currentList);
+        currentList = { type: 'orderedList', content: [] };
+      }
+      currentList.content.push({ type: 'listItem', content: [{ type: 'paragraph', content: inlineContent.length ? inlineContent : [] }] });
+    } else {
+      if (currentList) { content.push(currentList); currentList = null; }
+      content.push({ type: "paragraph", content: inlineContent.length ? inlineContent : [] });
+    }
+  }
+
+  if (currentList) content.push(currentList);
+  return { type: "doc", version: 1, content: content.length > 0 ? content : [{ type: "paragraph", content: [] }] };
+}
+
+import { cacheUtils } from './cacheUtils';
+
 export interface JiraIssue {
   id: string;
   key: string;
@@ -122,6 +190,10 @@ export class JiraService {
   }
 
   async getProjectIssueTypes(projectId: string) {
+    const CACHE_KEY = `jira_cache_issue_types_${projectId}`;
+    const cached = cacheUtils.get<any[]>(CACHE_KEY);
+    if (cached) return cached;
+
     // Note: This endpoint might vary depending on Jira version, but /issuetype/project is standard for Cloud
     const response = await fetch(`${this.apiBaseUrl}/issuetype/project?projectId=${projectId}`, {
       headers: {
@@ -130,7 +202,9 @@ export class JiraService {
       },
     });
     if (!response.ok) throw new Error(`Failed to fetch project issue types: ${response.status}`);
-    return await response.json();
+    const data = await response.json();
+    cacheUtils.set(CACHE_KEY, data, 3600); // 1 hour cache
+    return data;
   }
 
   async searchIssues(query: string, projectKey?: string): Promise<any[]> {
@@ -200,21 +274,7 @@ export class JiraService {
     };
 
     if (description) {
-      fields.description = {
-        type: "doc",
-        version: 1,
-        content: [
-          {
-            type: "paragraph",
-            content: [
-              {
-                type: "text",
-                text: description
-              }
-            ]
-          }
-        ]
-      };
+      fields.description = textToADF(description);
     }
 
     if (dueDate) {
@@ -306,7 +366,17 @@ export class JiraService {
     return data.transitions || [];
   }
 
-  async transitionIssue(issueKey: string, transitionId: string) {
+  async transitionIssue(issueKey: string, transitionId: string, fields?: any) {
+    const body: any = {
+      transition: {
+        id: transitionId,
+      },
+    };
+    
+    if (fields && Object.keys(fields).length > 0) {
+      body.fields = fields;
+    }
+
     const response = await fetch(`${this.apiBaseUrl}/issue/${issueKey}/transitions`, {
       method: "POST",
       headers: {
@@ -314,11 +384,7 @@ export class JiraService {
         Accept: "application/json",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        transition: {
-          id: transitionId,
-        },
-      }),
+      body: JSON.stringify(body),
     });
     if (!response.ok) {
       const error = await response.text();

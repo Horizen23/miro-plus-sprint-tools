@@ -9,13 +9,14 @@ import { ListItem } from "../components/ListItem";
 import { copyToClipboard } from "../utils/miroUtils";
 import { useGlobalConfig, GlobalConfig as TimesheetConfig } from "../contexts/GlobalConfigContext";
 import { parseUserMapping, isUserOwnerOfCard, getCardMappedUser } from "../utils/mappingUtils";
+import { cacheUtils } from "../utils/cacheUtils";
 
 interface TimesheetProps {
   items: (Card | AppCard)[];
 }
 
 export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
-  const { config, isLoading } = useGlobalConfig();
+  const { config, boardId, isLoading } = useGlobalConfig();
   const [timesheet, setTimesheet] = React.useState<Record<string, { title: string, cardId: string }[]>>({});
   const [filterOnlyMe, setFilterOnlyMe] = React.useState(false);
   const [includeUnassigned, setIncludeUnassigned] = React.useState(true);
@@ -24,12 +25,31 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
   const [showConfig, setShowConfig] = React.useState(false);
   const [copying, setCopying] = React.useState(false);
   const [userInfo, setUserInfo] = React.useState<UserInfo | null>(null);
+  const [allTags, setAllTags] = React.useState<any[]>([]);
 
   React.useEffect(() => {
     const loadState = async () => {
       try {
-        const info = await miro.board.getUserInfo();
+        const USER_INFO_CACHE_KEY = 'miro_cache_user_info';
+        let info = cacheUtils.get<UserInfo>(USER_INFO_CACHE_KEY);
+        
+        if (!info) {
+          info = await miro.board.getUserInfo();
+          cacheUtils.set(USER_INFO_CACHE_KEY, info, 3600); // 1 hour
+        }
         setUserInfo(info);
+      } catch (e) {}
+
+      try {
+        if (!boardId) return;
+        const CACHE_KEY = `miro_cache_tags_${boardId}`;
+        let tags = cacheUtils.get<any[]>(CACHE_KEY);
+        
+        if (!tags) {
+          tags = await miro.board.get({ type: "tag" });
+          cacheUtils.set(CACHE_KEY, tags, 600); // 10 minutes cache
+        }
+        setAllTags(tags);
       } catch (e) {}
 
       // Load Personal Config (LocalStorage)
@@ -73,10 +93,9 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
     localStorage.setItem('miro_timesheet_exclude_title', val);
   };
 
-  const generateTimesheet = async (cards: (Card | AppCard)[], currentConfig: TimesheetConfig, onlyMe: boolean, currentFilterTag: string, includeUnassigned: boolean, currentExcludeTitle: string) => {
+  const generateTimesheet = async (cards: (Card | AppCard)[], currentConfig: TimesheetConfig, onlyMe: boolean, currentFilterTag: string, includeUnassigned: boolean, currentExcludeTitle: string, tags: any[]) => {
     const grouped: Record<string, { title: string, cardId: string }[]> = {};
-    const allTags = await miro.board.get({ type: "tag" });
-    const tagMap = new Map(allTags.map(t => [t.id, t.title]));
+    const tagMap = new Map(tags.map(t => [t.id, t.title]));
 
     // Parse User Mapping using utility
     const mapping = parseUserMapping(currentConfig.tsUserMapping);
@@ -94,13 +113,6 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
       
       let c = card as any;
       
-      // Fetch full item to get description if missing
-      if (c.type === 'card' && !c.description) {
-        try {
-          c = await miro.board.getById(c.id);
-        } catch(e) {}
-      }
-
       // Fallback: use dueDate as startDate if startDate is not set
       if (!c.startDate && !c.dueDate) continue;
 
@@ -140,13 +152,7 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
         const isMiroAssignee = c.assignee?.userId === userInfo.id;
         const isMappedOwner = isUserOwnerOfCard(cardTags, mapping, userInfo, tagRegex);
         
-        // Search content for name/email match as fallback
-        const myEmail = (userInfo as any).email?.toLowerCase();
-        const myName = userInfo.name?.toLowerCase();
-        const inContent = (c.title + " " + (c.description || "")).toLowerCase();
-        const contentMatch = (myName && inContent.includes(myName)) || (myEmail && inContent.includes(myEmail));
-
-        const isMe = isMiroAssignee || isMappedOwner || contentMatch;
+        const isMe = isMiroAssignee || isMappedOwner;
 
         if (!isMe && !isUnassigned) {
           continue;
@@ -158,6 +164,11 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
       const start = new Date(effectiveStart);
       const end = new Date(effectiveEnd);
       
+      // Parse Title once per card
+      let rawTitle = c.title || "Untitled Card";
+      let { cleanTitle: title, estimate } = parseCardTitle(rawTitle);
+      title = title.replace(/^(\s*\[[^\]]*\])+\s*/, '').trim();
+
       // Zero out time for comparison
       const current = new Date(start.getFullYear(), start.getMonth(), start.getDate());
       const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
@@ -166,15 +177,6 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
         const dateStr = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(current.getDate()).padStart(2, '0')}`;
         if (!grouped[dateStr]) grouped[dateStr] = [];
         
-        let rawTitle = c.title || "Untitled Card";
-        const strippedTitle = rawTitle; // parseCardTitle will handle the heavy cleaning
-        
-        // Use central parser to get clean title and estimate
-        let { cleanTitle: title, estimate } = parseCardTitle(strippedTitle);
-        
-        // For Timesheet ONLY: aggressively strip any remaining leading brackets from the title
-        title = title.replace(/^(\s*\[[^\]]*\])+\s*/, '').trim();
-
         // Extract Variables
         const vars: Record<string, string> = { 
           title, 
@@ -245,11 +247,11 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
   React.useEffect(() => {
     const refresh = async () => {
       if (isLoading) return;
-      const data = await generateTimesheet(items, config, filterOnlyMe, filterTag, includeUnassigned, excludeTitle);
+      const data = await generateTimesheet(items, config, filterOnlyMe, filterTag, includeUnassigned, excludeTitle, allTags);
       setTimesheet(data);
     };
     refresh();
-  }, [items, config, isLoading, filterOnlyMe, filterTag, includeUnassigned, excludeTitle]);
+  }, [items, config, isLoading, filterOnlyMe, filterTag, includeUnassigned, excludeTitle, allTags]);
 
   const handleCopyAll = () => {
     let text = "";

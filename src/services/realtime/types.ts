@@ -22,5 +22,5 @@ export interface RealtimeService {
   joinAuth(state: string): void;
   sendAuthSuccess(state: string, code: string): void;
   onAuthSuccess(callback: (data: { state: string, code: string }) => void): void;
-  subscribeToAuth(state: string, callback: (code: string) => void): any;
+  subscribeToAuth(state: string, callback: (code: string) => void): () => void;
 }

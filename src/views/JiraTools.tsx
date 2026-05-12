@@ -25,6 +25,32 @@ interface SelectedCard {
   y: number;
 }
 
+const htmlToPlainText = (html?: string) => {
+  if (!html) return "";
+  let text = html;
+  
+  // Replace <br> and block closing tags with \n
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  text = text.replace(/<\/p>|<\/div>|<\/ul>|<\/ol>/gi, '\n');
+  
+  // Replace list items with dash bullets
+  text = text.replace(/<li[^>]*>/gi, '\n- ');
+  
+  // Replace non-breaking spaces
+  text = text.replace(/&nbsp;/g, ' ');
+  
+  // Strip all remaining HTML tags
+  text = text.replace(/<[^>]*>/g, '');
+  
+  // Clean up empty bullets (e.g., "- " followed by newline or end of string)
+  text = text.replace(/\n-\s*(?=\n|$)/g, '');
+  
+  // Normalize consecutive newlines into a single newline
+  text = text.replace(/\n+/g, '\n');
+  
+  return text.trim();
+};
+
 export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) => {
   const { config, setConfig, isAuthenticating, availableResources, startOAuth, selectResource, logout } = useJiraAuth();
   
@@ -138,8 +164,8 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
 
         items.push({
           id: item.id, type: item.type,
-          title: itemAny.title?.replace(/<[^>]*>/g, '') || "",
-          description: itemAny.description?.replace(/<[^>]*>/g, '') || "",
+          title: (itemAny.title || "").replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' '),
+          description: htmlToPlainText(itemAny.description),
           startDate: itemAny.startDate,
           dueDate: itemAny.dueDate,
           assigneeId: itemAny.assignee?.userId,
@@ -161,26 +187,31 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
   // --- Sync Checkbox Logic ---
   React.useEffect(() => {
     setCheckedIds(prev => {
-      const nextChecked = new Set(prev);
+      const currentIds = new Set(selectedCards.map(c => c.id));
+      const nextChecked = new Set<string>();
       let changed = false;
+
+      // 1. Keep only IDs that are still in current selection
+      prev.forEach(id => {
+        if (currentIds.has(id)) {
+          nextChecked.add(id);
+        } else {
+          changed = true;
+        }
+      });
+
+      // 2. Auto-check new items that need sync
       selectedCards.forEach(c => {
         const isCreateValid = !!(appParentKey || c.detectedParentKey);
         const isSynced = !!c.syncedKey;
         const hasChanged = isSynced && c.title !== c.lastSyncedTitle;
-        const canBeChecked = isCreateValid || isSynced;
 
-        if ((isCreateValid && !isSynced) || hasChanged) {
-          if (!prev.has(c.id)) {
-            nextChecked.add(c.id);
-            changed = true;
-          }
-        }
-        
-        if (!canBeChecked && prev.has(c.id)) {
-          nextChecked.delete(c.id);
+        if (((isCreateValid && !isSynced) || hasChanged) && !nextChecked.has(c.id)) {
+          nextChecked.add(c.id);
           changed = true;
         }
       });
+
       return changed ? nextChecked : prev;
     });
   }, [selectedCards, appParentKey]);
@@ -238,7 +269,6 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
       for (const card of cardsToSync) {
         const originalItem = await miro.board.getById(card.id) as any;
         if (!originalItem) continue;
-
         // --- Determine Assignee ---
         let targetAssignee: string | undefined;
 
@@ -287,8 +317,20 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
               
               // Stamp metadata and card
               const now = new Date().toLocaleString();
-              const stamp = `\n\n---\nJira Update: ${card.syncedKey}\nUpdated at: ${now}`;
-              originalItem.description = (card.description || "").split('\n\n---')[0] + stamp;
+              
+              // Try to remove old stamp safely
+              let cleanDesc = originalItem.description || "";
+              const oldStampRegex = /<p data-jira-stamp="true">.*?<\/p>/;
+              if (oldStampRegex.test(cleanDesc)) {
+                cleanDesc = cleanDesc.replace(oldStampRegex, '');
+              } else {
+                 cleanDesc = cleanDesc.split('<p>---</p><p>Jira')[0];
+                 cleanDesc = cleanDesc.split('\n\n---')[0];
+              }
+
+              const stamp = `<p data-jira-stamp="true">---<br><strong>Jira Update:</strong> ${card.syncedKey}<br><strong>Updated at:</strong> ${now}</p>`;
+              originalItem.description = cleanDesc + stamp;
+              
               const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
               await originalItem.setMetadata(metadataKey, { key: card.syncedKey, lastTitle: card.title });
               await originalItem.sync();
@@ -317,10 +359,19 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
             const jiraLink = config.authType === 'oauth' ? `${baseUrl}/browse/${newIssue.key}` : `${baseUrl.replace('/rest/api/3', '')}/browse/${newIssue.key}`;
 
             const now = new Date().toLocaleString();
-            const stamp = `\n\n---\nJira Issue: ${newIssue.key}\nSynced at: ${now}`;
             
-            originalItem.description = (card.description || "") + stamp;
-            originalItem.linkedTo = jiraLink;
+            let cleanDesc = originalItem.description || "";
+            const oldStampRegex = /<p data-jira-stamp="true">.*?<\/p>/;
+            if (oldStampRegex.test(cleanDesc)) {
+              cleanDesc = cleanDesc.replace(oldStampRegex, '');
+            } else {
+               cleanDesc = cleanDesc.split('<p>---</p><p>Jira')[0];
+               cleanDesc = cleanDesc.split('\n\n---')[0];
+            }
+
+            const stamp = `<p data-jira-stamp="true">---<br><strong>Jira Issue:</strong> <a href="${jiraLink}">${newIssue.key}</a><br><strong>Synced at:</strong> ${now}</p>`;
+            
+            originalItem.description = cleanDesc + stamp;
             const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
             await originalItem.setMetadata(metadataKey, { key: newIssue.key, lastTitle: card.title });
             await originalItem.sync();

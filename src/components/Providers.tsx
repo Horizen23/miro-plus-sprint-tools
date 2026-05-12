@@ -2,13 +2,16 @@
 
 import { MiroProvider } from '@mirohq/websdk-react-hooks';
 import { JiraAuthProvider } from '@/contexts/JiraAuthContext';
+import { GlobalConfigProvider } from '@/contexts/GlobalConfigContext';
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   return (
     <MiroProvider>
-      <JiraAuthProvider>
-        {children}
-      </JiraAuthProvider>
+      <GlobalConfigProvider>
+        <JiraAuthProvider>
+          {children}
+        </JiraAuthProvider>
+      </GlobalConfigProvider>
     </MiroProvider>
   );
 }

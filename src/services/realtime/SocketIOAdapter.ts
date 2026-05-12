@@ -90,7 +90,9 @@ export class SocketIOAdapter implements RealtimeService {
       }
     };
     this.socket?.on("auth-success", handler);
-    return handler;
+    return () => {
+      this.socket?.off("auth-success", handler);
+    };
   }
 
   /** Notify all registered callbacks */

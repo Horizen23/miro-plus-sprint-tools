@@ -1,3 +1,4 @@
+'use client';
 import * as React from "react";
 
 export interface GlobalConfig {
@@ -27,6 +28,7 @@ export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = {
 interface GlobalConfigContextType {
   config: GlobalConfig;
   updateConfig: (newConfig: Partial<GlobalConfig>) => Promise<void>;
+  boardId: string | null;
   isLoading: boolean;
 }
 
@@ -34,11 +36,16 @@ const GlobalConfigContext = React.createContext<GlobalConfigContextType | undefi
 
 export const GlobalConfigProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [config, setConfig] = React.useState<GlobalConfig>(DEFAULT_GLOBAL_CONFIG);
+  const [boardId, setBoardId] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
 
   React.useEffect(() => {
     const loadConfig = async () => {
       try {
+        // Fetch board info once
+        const info = await miro.board.getInfo();
+        setBoardId(info.id);
+
         const appDataKey = "globalConfig";
         const saved = await (miro.board as any).getAppData(appDataKey);
         if (saved) {
@@ -93,7 +100,7 @@ export const GlobalConfigProvider: React.FC<{ children: React.ReactNode }> = ({ 
   };
 
   return (
-    <GlobalConfigContext.Provider value={{ config, updateConfig, isLoading }}>
+    <GlobalConfigContext.Provider value={{ config, updateConfig, boardId, isLoading }}>
       {children}
     </GlobalConfigContext.Provider>
   );

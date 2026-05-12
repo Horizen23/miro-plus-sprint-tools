@@ -1,3 +1,4 @@
+'use client';
 import * as React from "react";
 import { JiraConfig, JiraService } from "../utils/jiraService";
 import { RealtimeFactory } from "../services/realtime/factory";
@@ -98,6 +99,8 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
+  const authUnsubRef = React.useRef<(() => void) | null>(null);
+
   React.useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
@@ -105,10 +108,11 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     // --- Main App Logic (Miro Panel) ---
     realtimeService.connect();
     const currentState = localStorage.getItem(process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_STATE_KEY || "jira_auth_state");
+    let unsubAuth: (() => void) | undefined;
     
     if (currentState && !code) {
       console.log("[JiraAuthProvider] Main app detected. Subscribing to auth channel:", currentState);
-      realtimeService.subscribeToAuth(currentState, (authCode: string) => {
+      unsubAuth = realtimeService.subscribeToAuth(currentState, (authCode: string) => {
         console.log("[JiraAuthProvider] Code received via subscription!");
         const stateKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_STATE_KEY || "jira_auth_state";
         
@@ -131,7 +135,10 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
 
     window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      if (unsubAuth) unsubAuth();
+    };
   }, [config]);
 
   const startOAuth = () => {
@@ -145,9 +152,13 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     
     console.log("[JiraAuth] Starting OAuth with state:", state);
     
+    // Clear previous subscription if user clicked multiple times
+    if (authUnsubRef.current) authUnsubRef.current();
+    
     // Listen for this specific session
-    realtimeService.subscribeToAuth(state, (authCode: string) => {
+    authUnsubRef.current = realtimeService.subscribeToAuth(state, (authCode: string) => {
       console.log("[JiraAuth] Code received for state:", state);
+      authUnsubRef.current = null; // Auto clear reference when done
       
       const savedState = localStorage.getItem(stateKey);
       

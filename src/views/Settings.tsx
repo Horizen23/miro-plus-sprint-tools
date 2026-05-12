@@ -4,16 +4,78 @@ import { InputField } from "../components/InputField";
 import { Button } from "../components/Button";
 import { SummaryCard } from "../components/SummaryCard";
 import { useGlobalConfig } from "../contexts/GlobalConfigContext";
+import { cacheUtils } from "../utils/cacheUtils";
 
 export const SettingsView: React.FC = () => {
-  const { config, updateConfig, isLoading } = useGlobalConfig();
+  const { config, updateConfig, boardId, isLoading } = useGlobalConfig();
   const [localConfig, setLocalConfig] = React.useState(config);
   const [saving, setSaving] = React.useState(false);
+  const [jiraInfo, setJiraInfo] = React.useState<{ name?: string, site?: string } | null>(null);
+  const [cacheInfo, setCacheInfo] = React.useState<string[]>([]);
 
-  // Sync local state when global config loads
   React.useEffect(() => {
     setLocalConfig(config);
+    loadSystemInfo();
   }, [config]);
+
+  const loadSystemInfo = () => {
+    // 1. Get Jira Info
+    const jiraKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_CONFIG_KEY || "jira-config-v2";
+    const saved = localStorage.getItem(jiraKey);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        // Jira Service might have stored name during login
+        setJiraInfo({ name: parsed.user?.displayName || "Connected", site: parsed.siteUrl });
+      } catch(e) {}
+    } else {
+      setJiraInfo(null);
+    }
+
+    // 2. Identify active caches with TTL info
+    const activeCaches: { name: string, expiry: number }[] = [];
+    const keys = Object.keys(localStorage);
+    
+    keys.forEach(k => {
+      try {
+        const entry = JSON.parse(localStorage.getItem(k) || "");
+        if (entry && entry.expiry) {
+          if (k.startsWith('miro_cache_tags_')) {
+            if (!activeCaches.find(c => c.name === "Miro Tags")) 
+              activeCaches.push({ name: "Miro Tags", expiry: entry.expiry });
+          } else if (k.startsWith('jira_cache_user_')) {
+            if (!activeCaches.find(c => c.name === "Jira Users"))
+              activeCaches.push({ name: "Jira Users", expiry: entry.expiry });
+          } else if (k.startsWith('jira_cache_issue_types_')) {
+            if (!activeCaches.find(c => c.name === "Jira Issue Types"))
+              activeCaches.push({ name: "Jira Issue Types", expiry: entry.expiry });
+          } else if (k.startsWith('miro_cache_user_info')) {
+            if (!activeCaches.find(c => c.name === "User Info"))
+              activeCaches.push({ name: "User Info", expiry: entry.expiry });
+          }
+        }
+      } catch(e) {}
+    });
+    
+    setCacheInfo(activeCaches as any);
+  };
+
+  const handleClearCache = () => {
+    // Clear all app caches using the utility
+    cacheUtils.clearAll();
+    
+    // Also clear specific UI settings
+    const uiSettings = [
+      'miro_timesheet_only_me', 
+      'miro_timesheet_include_unassigned', 
+      'miro_timesheet_filter_tag', 
+      'miro_timesheet_exclude_title'
+    ];
+    uiSettings.forEach(k => localStorage.removeItem(k));
+    
+    loadSystemInfo();
+    miro.board.notifications.showInfo("All local caches and settings cleared.");
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -27,6 +89,61 @@ export const SettingsView: React.FC = () => {
   return (
     <div className="container" style={{ padding: 0 }}>
       <section style={{ gap: '16px' }}>
+        {/* System & Connectivity Section */}
+        <div>
+          <SectionHeader 
+            title="System & Connectivity" 
+            icon={(
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+                <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+                <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+                <line x1="12" y1="20" x2="12.01" y2="20"></line>
+              </svg>
+            )}
+          />
+          <SummaryCard>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ 
+                  width: '8px', height: '8px', borderRadius: '50%', 
+                  background: jiraInfo ? '#00ff88' : '#ff4444',
+                  boxShadow: jiraInfo ? '0 0 8px #00ff88' : 'none'
+                }}></span>
+                <span style={{ fontSize: '12px', fontWeight: 600 }}>Jira: {jiraInfo ? (jiraInfo.name || 'Active') : 'Disconnected'}</span>
+              </div>
+              {jiraInfo?.site && <span style={{ fontSize: '10px', opacity: 0.6 }}>{jiraInfo.site}</span>}
+            </div>
+            
+            {cacheInfo.length > 0 && (
+              <div style={{ fontSize: '11px', marginBottom: '12px' }}>
+                <div style={{ opacity: 0.6, marginBottom: '4px' }}>Data Caches (API Acceleration):</div>
+                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                  {cacheInfo.map((c: any) => {
+                    const remaining = Math.max(0, Math.round((c.expiry - Date.now()) / 1000 / 60));
+                    return (
+                      <span key={c.name} style={{ 
+                        background: '#008f5d', 
+                        color: '#ffffff', 
+                        padding: '2px 8px', 
+                        borderRadius: '4px', 
+                        fontSize: '10px',
+                        fontWeight: 600,
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                      }}>
+                        {c.name} ({remaining}m)
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <Button onClick={handleClearCache} variant="secondary" fullWidth style={{ fontSize: '11px', padding: '4px' }}>
+              Reset System Cache & Preferences
+            </Button>
+          </SummaryCard>
+        </div>
         <div>
           <SectionHeader 
             title="Timesheet Patterns" 

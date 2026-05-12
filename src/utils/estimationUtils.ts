@@ -54,6 +54,7 @@ export interface CardTitleData {
 export const parseCardTitle = (title: string): CardTitleData => {
   const rawTitle = (title || "")
     .replace(/<[^>]*>/g, '') // Remove HTML tags
+    .replace(/&nbsp;/g, ' ') // Decode Non-Breaking Space
     .replace(/&#39;/g, "'")  // Decode Single Quote
     .replace(/&quot;/g, '"') // Decode Double Quote
     .replace(/&amp;/g, '&')  // Decode Ampersand
