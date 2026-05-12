@@ -15,7 +15,9 @@ interface JiraAuthContextValue {
   config: JiraConfig;
   setConfig: React.Dispatch<React.SetStateAction<JiraConfig>>;
   isAuthenticating: boolean;
+  availableResources: any[];
   startOAuth: () => void;
+  selectResource: (resource: any) => void;
   logout: () => void;
 }
 
@@ -24,7 +26,9 @@ const JiraAuthContext = React.createContext<JiraAuthContextValue | undefined>(un
 export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [config, setConfig] = React.useState<JiraConfig>({ authType: 'oauth' });
   const [isAuthenticating, setIsAuthenticating] = React.useState(false);
+  const [availableResources, setAvailableResources] = React.useState<any[]>([]);
   const [isLoaded, setIsLoaded] = React.useState(false);
+  const [pendingAuthData, setPendingAuthData] = React.useState<any>(null);
 
   // Load config on mount
   React.useEffect(() => {
@@ -65,17 +69,27 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const res = await svc.getAccessibleResources(data.access_token);
       if (res && res.length > 0) {
         console.log("[JiraAuth] Found accessible resources:", res.length);
-        const newCfg: JiraConfig = { 
-          ...config, 
-          authType: 'oauth', 
-          accessToken: data.access_token, 
-          refreshToken: data.refresh_token, 
-          cloudId: res[0].id, 
-          baseUrl: res[0].url 
-        };
-        setConfig(newCfg); 
-        const configKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_CONFIG_KEY || "jira-config-v2";
-        localStorage.setItem(configKey, JSON.stringify(newCfg)); 
+        
+        if (res.length === 1) {
+          const newCfg: JiraConfig = { 
+            ...config, 
+            authType: 'oauth', 
+            accessToken: data.access_token, 
+            refreshToken: data.refresh_token, 
+            cloudId: res[0].id, 
+            baseUrl: res[0].url 
+          };
+          setConfig(newCfg); 
+          const configKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_CONFIG_KEY || "jira-config-v2";
+          localStorage.setItem(configKey, JSON.stringify(newCfg)); 
+        } else {
+          // Multiple sites found, let user choose
+          setAvailableResources(res);
+          setPendingAuthData({
+            accessToken: data.access_token,
+            refreshToken: data.refresh_token
+          });
+        }
       }
     } catch (e) { 
       console.error("[JiraAuth] Error in handleTokenExchange:", e); 
@@ -160,14 +174,34 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     window.open(url, 'JiraAuth', 'width=600,height=800');
   };
 
+  const selectResource = (resource: any) => {
+    if (!pendingAuthData) return;
+    
+    const newCfg: JiraConfig = { 
+      ...config, 
+      authType: 'oauth', 
+      accessToken: pendingAuthData.accessToken, 
+      refreshToken: pendingAuthData.refreshToken, 
+      cloudId: resource.id, 
+      baseUrl: resource.url 
+    };
+    setConfig(newCfg); 
+    const configKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_CONFIG_KEY || "jira-config-v2";
+    localStorage.setItem(configKey, JSON.stringify(newCfg)); 
+    setAvailableResources([]);
+    setPendingAuthData(null);
+  };
+
   const logout = () => {
     setConfig({ authType: 'oauth' });
+    setAvailableResources([]);
+    setPendingAuthData(null);
     const configKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_CONFIG_KEY || "jira-config-v2";
     localStorage.removeItem(configKey);
   };
 
   return (
-    <JiraAuthContext.Provider value={{ config, setConfig, isAuthenticating, startOAuth, logout }}>
+    <JiraAuthContext.Provider value={{ config, setConfig, isAuthenticating, availableResources, startOAuth, selectResource, logout }}>
       {children}
     </JiraAuthContext.Provider>
   );

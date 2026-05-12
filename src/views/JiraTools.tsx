@@ -26,7 +26,7 @@ interface SelectedCard {
 }
 
 export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) => {
-  const { config, setConfig, isAuthenticating, startOAuth, logout } = useJiraAuth();
+  const { config, setConfig, isAuthenticating, availableResources, startOAuth, selectResource, logout } = useJiraAuth();
   
   const [showConfig, setShowConfig] = React.useState(!config.accessToken && !config.apiToken);
   const [selectedCards, setSelectedCards] = React.useState<SelectedCard[]>([]);
@@ -44,6 +44,12 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
       setShowConfig(false);
     }
   }, [config.accessToken]);
+
+  React.useEffect(() => {
+    if (availableResources.length > 0) {
+      setShowConfig(true);
+    }
+  }, [availableResources]);
 
   const notify = (msg: string, type: 'info' | 'error' = 'info') => {
     const truncated = msg.length > 80 ? msg.substring(0, 77) + "..." : msg;
@@ -365,9 +371,30 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
               </div>
             </div>
             {config.authType === 'oauth' ? (
-              <Button loading={isAuthenticating} onClick={startOAuth} fullWidth>
-                {config.accessToken ? "Reconnect Account" : "Connect Jira"}
-              </Button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {availableResources.length > 0 ? (
+                  <>
+                    <div className="hint-text" style={{ marginBottom: '4px', fontWeight: 700, color: '#050038' }}>
+                      Select Jira Site ({availableResources.length} found)
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {availableResources.map(res => (
+                        <ListItem 
+                          key={res.id}
+                          title={res.name}
+                          subtitle={res.url}
+                          onClick={() => selectResource(res)}
+                          style={{ border: '1px solid #eef0f7', background: 'white' }}
+                        />
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <Button loading={isAuthenticating} onClick={startOAuth} fullWidth>
+                    {config.accessToken ? "Reconnect Account" : "Connect Jira"}
+                  </Button>
+                )}
+              </div>
             ) : (
               <div className="config-body" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <InputField placeholder="Base URL (https://your-domain.atlassian.net)" value={config.baseUrl || ""} onChange={e => setConfig({...config, baseUrl: e.target.value})} />
