@@ -108,6 +108,17 @@ export async function handleDuplicateAndLink() {
       // Delay briefly for SDK sync
       await new Promise((resolve) => setTimeout(resolve, 500));
 
+      // Copy Metadata
+      const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
+      try {
+        const metadata = await originalCard.getMetadata(metadataKey);
+        if (metadata && Object.keys(metadata).length > 0) {
+          await newItem.setMetadata(metadataKey, metadata);
+        }
+      } catch (e) {
+        console.warn("Failed to copy metadata:", e);
+      }
+
       newItem.linkedTo = originalUrl;
       await newItem.sync();
       newItems.push(newItem);
