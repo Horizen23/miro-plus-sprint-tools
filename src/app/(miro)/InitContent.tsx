@@ -30,7 +30,9 @@ export default function InitContent() {
 
       // --- Register Custom Actions ---
       const updateCardStatus = async (card: Card, status: 'to-do' | 'in-progress' | 'done', jiraWithRefresh: (<T>(fn: (s: JiraService) => Promise<T>) => Promise<T>) | null, userInfo: any, myAccountId?: string, mapping?: any, ignoreRegex?: string) => {
-        const today = new Date().toISOString().split('T')[0];
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
         const currentMiroUserId = userInfo?.id;
 
         // Load Mapping for Tag-based Assignee validation
@@ -44,6 +46,7 @@ export default function InitContent() {
           mappedUserIdentity = getCardMappedUser(cardTags, mapping || {}, ignoreRegex);
           isMe = isUserOwnerOfCard(cardTags, mapping || {}, userInfo, ignoreRegex);
         } catch (e) {}
+
 
         if (status === 'in-progress') {
           const hasFormalAssignee = !!card.assignee?.userId;
@@ -150,14 +153,11 @@ export default function InitContent() {
 
         const configKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_CONFIG_KEY || "jira-config-v2";
         const savedConfig = localStorage.getItem(configKey);
-        if (!savedConfig) {
-          console.warn("[JiraSync] No saved config found in localStorage");
-          return;
-        }
+        const hasJiraConfig = !!savedConfig;
         
-        let jiraConfig = JSON.parse(savedConfig);
+        let jiraConfig = hasJiraConfig ? JSON.parse(savedConfig!) : null;
 
-        const withRefresh = async <T,>(fn: (service: JiraService) => Promise<T>): Promise<T> => {
+        const withRefresh = hasJiraConfig ? async <T,>(fn: (service: JiraService) => Promise<T>): Promise<T> => {
           let service = new JiraService(jiraConfig);
           try {
             return await fn(service);
@@ -188,7 +188,7 @@ export default function InitContent() {
             }
             throw e;
           }
-        };
+        } : null;
 
         // 1. Pre-fetch Config and User Info ONCE
         let myAccountId: string | undefined;
@@ -208,13 +208,15 @@ export default function InitContent() {
 
           
 
-          const myself = await withRefresh(s => s.getMyself()).catch(e => {
-            console.warn("[JiraSync] Could not fetch Jira profile:", e.message);
-            return null;
-          });
-          if (myself) {
-            myAccountId = myself.accountId;
+          if (withRefresh) {
+            const myself = await withRefresh(s => s.getMyself()).catch(e => {
+              console.warn("[JiraSync] Could not fetch Jira profile:", e.message);
+              return null;
+            });
+            if (myself) {
+              myAccountId = myself.accountId;
 
+            }
           }
         } catch(e) {
           console.warn("[JiraSync] Pre-fetch failed:", e);

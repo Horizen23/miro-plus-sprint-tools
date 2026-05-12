@@ -8,7 +8,7 @@ import { InputField } from "../components/InputField";
 import { ListItem } from "../components/ListItem";
 import { copyToClipboard } from "../utils/miroUtils";
 import { useGlobalConfig, GlobalConfig as TimesheetConfig } from "../contexts/GlobalConfigContext";
-import { parseUserMapping, isUserOwnerOfCard } from "../utils/mappingUtils";
+import { parseUserMapping, isUserOwnerOfCard, getCardMappedUser } from "../utils/mappingUtils";
 
 interface TimesheetProps {
   items: (Card | AppCard)[];
@@ -18,7 +18,9 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
   const { config, isLoading } = useGlobalConfig();
   const [timesheet, setTimesheet] = React.useState<Record<string, { title: string, cardId: string }[]>>({});
   const [filterOnlyMe, setFilterOnlyMe] = React.useState(false);
+  const [includeUnassigned, setIncludeUnassigned] = React.useState(true);
   const [filterTag, setFilterTag] = React.useState("");
+  const [excludeTitle, setExcludeTitle] = React.useState("");
   const [showConfig, setShowConfig] = React.useState(false);
   const [copying, setCopying] = React.useState(false);
   const [userInfo, setUserInfo] = React.useState<UserInfo | null>(null);
@@ -35,9 +37,17 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
       if (localOnlyMe !== null) {
         setFilterOnlyMe(localOnlyMe === 'true');
       }
+      const localUnassigned = localStorage.getItem('miro_timesheet_include_unassigned');
+      if (localUnassigned !== null) {
+        setIncludeUnassigned(localUnassigned === 'true');
+      }
       const localTag = localStorage.getItem('miro_timesheet_filter_tag');
       if (localTag !== null) {
         setFilterTag(localTag);
+      }
+      const localExclude = localStorage.getItem('miro_timesheet_exclude_title');
+      if (localExclude !== null) {
+        setExcludeTitle(localExclude);
       }
     };
     loadState();
@@ -48,12 +58,22 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
     localStorage.setItem('miro_timesheet_only_me', String(val));
   };
 
+  const updatePersonalUnassigned = (val: boolean) => {
+    setIncludeUnassigned(val);
+    localStorage.setItem('miro_timesheet_include_unassigned', String(val));
+  };
+
   const updatePersonalTag = (val: string) => {
     setFilterTag(val);
     localStorage.setItem('miro_timesheet_filter_tag', val);
   };
 
-  const generateTimesheet = async (cards: (Card | AppCard)[], currentConfig: TimesheetConfig, onlyMe: boolean, currentFilterTag: string) => {
+  const updatePersonalExcludeTitle = (val: string) => {
+    setExcludeTitle(val);
+    localStorage.setItem('miro_timesheet_exclude_title', val);
+  };
+
+  const generateTimesheet = async (cards: (Card | AppCard)[], currentConfig: TimesheetConfig, onlyMe: boolean, currentFilterTag: string, includeUnassigned: boolean, currentExcludeTitle: string) => {
     const grouped: Record<string, { title: string, cardId: string }[]> = {};
     const allTags = await miro.board.get({ type: "tag" });
     const tagMap = new Map(allTags.map(t => [t.id, t.title]));
@@ -81,11 +101,22 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
         } catch(e) {}
       }
 
-      if (!c.startDate) continue;
+      // Fallback: use dueDate as startDate if startDate is not set
+      if (!c.startDate && !c.dueDate) continue;
 
       const cardTags = (c.tagIds || [])
         .map((tagId: string) => tagMap.get(tagId))
         .filter(Boolean) as string[];
+
+      // 0. Filter by Exclude Title
+      if (currentExcludeTitle) {
+        try {
+          const excludeRe = new RegExp(currentExcludeTitle, "i");
+          if (excludeRe.test(c.title || "")) continue;
+        } catch (e) {
+          if ((c.title || "").toLowerCase().includes(currentExcludeTitle.toLowerCase())) continue;
+        }
+      }
 
       // 1. Filter by Tag
       if (currentFilterTag) {
@@ -97,42 +128,42 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
         }
       }
 
+      // 1.5 Unassigned Tasks Filter
+      const mappedUser = getCardMappedUser(cardTags, mapping, tagRegex);
+      const isUnassigned = !c.assignee?.userId && !mappedUser;
+      if (isUnassigned && !includeUnassigned) {
+        continue;
+      }
+
       // 2. Filter by Me (Only My Tasks)
       if (onlyMe && userInfo) {
-        // Standard Miro Assignee check
-        const isMiroAssignee = c.assigneeId === userInfo.id;
-        
-        // Use mapping utility to check ownership (ignores jira-* tags)
+        const isMiroAssignee = c.assignee?.userId === userInfo.id;
         const isMappedOwner = isUserOwnerOfCard(cardTags, mapping, userInfo, tagRegex);
-
-        // Match by Jira Assignee in metadata (email match)
-        let isJiraAssignee = false;
-        const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
-        const meta = c.metadata?.[metadataKey];
+        
+        // Search content for name/email match as fallback
         const myEmail = (userInfo as any).email?.toLowerCase();
-        if (meta?.assigneeEmail && myEmail && meta.assigneeEmail.toLowerCase() === myEmail) {
-          isJiraAssignee = true;
-        }
-
-        // Match by Name/Email in Title or Description (Last Resort)
         const myName = userInfo.name?.toLowerCase();
         const inContent = (c.title + " " + (c.description || "")).toLowerCase();
         const contentMatch = (myName && inContent.includes(myName)) || (myEmail && inContent.includes(myEmail));
 
-        if (!isMiroAssignee && !isMappedOwner && !isJiraAssignee && !contentMatch) {
+        const isMe = isMiroAssignee || isMappedOwner || contentMatch;
+
+        if (!isMe && !isUnassigned) {
           continue;
         }
       }
 
-      const start = new Date(c.startDate);
-      const end = c.dueDate ? new Date(c.dueDate) : new Date(c.startDate);
+      const effectiveStart = c.startDate || c.dueDate;
+      const effectiveEnd = c.dueDate || c.startDate;
+      const start = new Date(effectiveStart);
+      const end = new Date(effectiveEnd);
       
       // Zero out time for comparison
       const current = new Date(start.getFullYear(), start.getMonth(), start.getDate());
       const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
 
       while (current <= last) {
-        const dateStr = current.toISOString().split('T')[0];
+        const dateStr = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(current.getDate()).padStart(2, '0')}`;
         if (!grouped[dateStr]) grouped[dateStr] = [];
         
         let rawTitle = c.title || "Untitled Card";
@@ -212,12 +243,13 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
   };
 
   React.useEffect(() => {
-    const updateTimesheet = async () => {
-      const ts = await generateTimesheet(items, config, filterOnlyMe, filterTag);
-      setTimesheet(ts);
+    const refresh = async () => {
+      if (isLoading) return;
+      const data = await generateTimesheet(items, config, filterOnlyMe, filterTag, includeUnassigned, excludeTitle);
+      setTimesheet(data);
     };
-    updateTimesheet();
-  }, [items, config, filterOnlyMe, filterTag]);
+    refresh();
+  }, [items, config, isLoading, filterOnlyMe, filterTag, includeUnassigned, excludeTitle]);
 
   const handleCopyAll = () => {
     let text = "";
@@ -296,12 +328,24 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
                 value={filterTag}
                 onChange={(e) => updatePersonalTag(e.target.value)}
               />
-              <div style={{ marginTop: '4px' }}>
+              <InputField 
+                placeholder="Exclude Title (e.g. Holiday|Leave)"
+                value={excludeTitle}
+                onChange={(e) => updatePersonalExcludeTitle(e.target.value)}
+              />
+              <div style={{ marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <InputField 
                   type="checkbox"
                   label="Show only my tasks (Only Me)"
                   checked={Boolean(filterOnlyMe)}
                   onChange={(e: any) => updatePersonalOnlyMe(e.target.checked)}
+                  style={{ width: '15px', height: '15px', cursor: 'pointer' }}
+                />
+                <InputField 
+                  type="checkbox"
+                  label="Include unassigned tasks"
+                  checked={Boolean(includeUnassigned)}
+                  onChange={(e: any) => updatePersonalUnassigned(e.target.checked)}
                   style={{ width: '15px', height: '15px', cursor: 'pointer' }}
                 />
               </div>
@@ -351,6 +395,7 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
               const thaiDate = dateObj.toLocaleDateString('th-TH', { 
                 weekday: 'short', day: 'numeric', month: 'short'
               });
+
               return (
                 <div key={date} className="timesheet-group">
                   <div className="date-header">
