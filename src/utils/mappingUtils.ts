@@ -94,3 +94,31 @@ export function getCardMappedUser(
   }
   return undefined;
 }
+
+/**
+ * Gets ALL mapped user identities for a card
+ * @returns string[]
+ */
+export function getCardMappedUsers(
+  cardTags: string[],
+  mapping: Map<string, string>,
+  ignoreRegex?: string
+): string[] {
+  let metadataRe: RegExp | null = null;
+  if (ignoreRegex) {
+    try { metadataRe = new RegExp(ignoreRegex, 'i'); } catch(e) {}
+  }
+
+  const relevantTags = metadataRe
+    ? cardTags.filter(t => !metadataRe!.test(t))
+    : cardTags;
+
+  const users: string[] = [];
+  for (const tag of relevantTags) {
+    const val = mapping.get(tag.toLowerCase());
+    if (val && !users.includes(val)) {
+      users.push(val);
+    }
+  }
+  return users;
+}

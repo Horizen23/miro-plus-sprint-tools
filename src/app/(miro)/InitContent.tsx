@@ -5,7 +5,7 @@ import { Card, AppCard, CustomAction } from '@mirohq/websdk-types';
 import { RealtimeFactory } from '@/services/realtime/factory';
 import { VotingState } from '@/services/realtime/types';
 import { JiraService } from '@/utils/jiraService';
-import { parseUserMapping, getCardMappedUser, isUserOwnerOfCard } from '@/utils/mappingUtils';
+import { parseUserMapping, getCardMappedUser, getCardMappedUsers, isUserOwnerOfCard } from '@/utils/mappingUtils';
 import { cacheUtils } from '@/utils/cacheUtils';
 import { useGlobalConfig } from '@/contexts/GlobalConfigContext';
 
@@ -45,12 +45,14 @@ const updateCardStatus = async (
 
   let mappedUserIdentity: string | undefined;
   let isMe = false;
+  let mappedUsers: string[] = [];
 
   try {
     const tags = boardTags || await miro.board.get({ type: 'tag' });
     const cardTags = tags.filter(t => (card as any).tagIds?.includes(t.id)).map(t => t.title);
     const userMap = mapping || new Map<string, string>();
     mappedUserIdentity = getCardMappedUser(cardTags, userMap, ignoreRegex);
+    mappedUsers = getCardMappedUsers(cardTags, userMap, ignoreRegex);
     isMe = isUserOwnerOfCard(cardTags, userMap, userInfo, ignoreRegex);
   } catch (e) {
     console.error(`[updateCardStatus] Tag/Mapping Error:`, e);
@@ -84,34 +86,34 @@ const updateCardStatus = async (
 
     if (metadata && metadata.key) {
        try {
-          const transitions = await jiraWithRefresh(s => s.getTransitions(metadata.key!));
-          let targetRegex = /none/;
-          if (status === 'in-progress') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_IN_PROGRESS || "progress|doing|dev", "i");
-          else if (status === 'done') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_DONE || "done|complete|resolved", "i");
-          else if (status === 'to-do') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_TODO || "to[\\s\\-]*do|backlog|open|new|ready|todo", "i");
-
+          const syncedKeys = metadata.key.split(',').map((k: string) => k.trim()).filter(Boolean);
+          
+          let targetAssignees: string[] = [];
           const miroAssigneeId = card.type === 'card' ? (card as Card).assignee?.userId : null;
-          let targetAssignee: string | undefined;
 
-          if (isMe || miroAssigneeId === currentMiroUserId) {
-            targetAssignee = myAccountId;
-          } else if (mappedUserIdentity) {
-            const USER_CACHE_KEY = `jira_cache_user_${mappedUserIdentity}`;
+          for (const mu of mappedUsers) {
+            const USER_CACHE_KEY = `jira_cache_user_${mu}`;
             let cachedUserId = cacheUtils.get<string>(USER_CACHE_KEY);
             if (cachedUserId) {
-              targetAssignee = cachedUserId;
+              targetAssignees.push(cachedUserId);
             } else {
-              const foundUsers: any[] = await jiraWithRefresh(s => s.findUsers(mappedUserIdentity!)) || [];
+              const foundUsers: any[] = await jiraWithRefresh(s => s.findUsers(mu)) || [];
               if (foundUsers && foundUsers.length > 0) {
-                targetAssignee = foundUsers[0].accountId;
-                cacheUtils.set(USER_CACHE_KEY, targetAssignee!, 3600);
+                targetAssignees.push(foundUsers[0].accountId);
+                cacheUtils.set(USER_CACHE_KEY, foundUsers[0].accountId, 3600);
               }
             }
           }
 
-          const transition = transitions.find((t: any) => targetRegex.test(t.name));
+          if (targetAssignees.length === 0) {
+            if (isMe || miroAssigneeId === currentMiroUserId) {
+               targetAssignees.push(myAccountId!);
+            } else {
+               targetAssignees.push(undefined as any);
+            }
+          }
+
           const jiraFields: any = { summary: (card.title || "").replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ') };
-          
           if (card.type === 'card') {
             const c = card as Card;
             if (c.dueDate) jiraFields.duedate = c.dueDate.split('T')[0];
@@ -120,17 +122,29 @@ const updateCardStatus = async (
               jiraFields[fieldId] = c.startDate.split('T')[0];
             }
           }
-          if (targetAssignee) jiraFields.assignee = { accountId: targetAssignee };
-
           const cardData = card.type === 'card' ? (card as Card) : null;
-          await jiraWithRefresh(s => s.updateIssue(metadata.key!, jiraFields.summary, cardData?.dueDate, cardData?.startDate, targetAssignee));
-          jiraUpdated = true;
 
-          if (transition) {
-            await jiraWithRefresh(s => s.transitionIssue(metadata.key!, (transition as any).id));
-            await notify(`Jira: ${metadata.key} -> ${(transition as any).name}`);
-          } else {
-            await notify(`Dates synced, but no '${status}' transition found`, 'info');
+          let targetRegex = /none/;
+          if (status === 'in-progress') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_IN_PROGRESS || "progress|doing|dev", "i");
+          else if (status === 'done') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_DONE || "done|complete|resolved", "i");
+          else if (status === 'to-do') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_TODO || "to[\\s\\-]*do|backlog|open|new|ready|todo", "i");
+
+          for (let i = 0; i < syncedKeys.length; i++) {
+            const currentKey = syncedKeys[i];
+            const currentAssignee = targetAssignees[i] !== undefined ? targetAssignees[i] : targetAssignees[0];
+
+            await jiraWithRefresh(s => s.updateIssue(currentKey, jiraFields.summary, cardData?.dueDate, cardData?.startDate, currentAssignee));
+            jiraUpdated = true;
+
+            const transitions = await jiraWithRefresh(s => s.getTransitions(currentKey));
+            const transition = transitions.find((t: any) => targetRegex.test(t.name));
+
+            if (transition) {
+              await jiraWithRefresh(s => s.transitionIssue(currentKey, (transition as any).id));
+              await notify(`Jira: ${currentKey} -> ${(transition as any).name}`);
+            } else {
+              await notify(`Jira: ${currentKey} dates synced, no '${status}' transition`, 'info');
+            }
           }
        } catch (err: any) {
           console.error(`[JiraSync] [${metadata.key}] Sync Error:`, err.message);

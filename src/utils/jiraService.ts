@@ -311,10 +311,14 @@ export class JiraService {
     return await response.json();
   }
 
-  async updateIssue(issueKey: string, summary: string, dueDate?: string, startDate?: string, assigneeAccountId?: string) {
+  async updateIssue(issueKey: string, summary: string, dueDate?: string, startDate?: string, assigneeAccountId?: string, description?: string) {
     const fields: any = {
       summary: summary,
     };
+
+    if (description) {
+      fields.description = textToADF(description);
+    }
     
     if (dueDate) {
       fields.duedate = dueDate.split('T')[0];
