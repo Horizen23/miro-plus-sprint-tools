@@ -138,9 +138,17 @@ export function useVotingSession(
             // Update local state with merged data
             setVotingSession(mergedState);
             
-            // Ensure realtime server has the merged state
-            const realtime = RealtimeFactory.getInstance();
-            realtime.updateState(metadata.cardId, mergedState as any);
+            // Only broadcast if state actually changed (avoid spam on periodic sync)
+            const prev = votingSessionRef.current;
+            const hasChanges = !prev
+              || mergedParticipants.length !== (prev.participants || []).length
+              || Object.keys(metadata.votes || {}).length !== Object.keys(prev.votes || {}).length
+              || metadata.status !== prev.status;
+            
+            if (hasChanges) {
+              const realtime = RealtimeFactory.getInstance();
+              realtime.updateState(metadata.cardId, mergedState as any);
+            }
             
             // Notification trigger for others
             if (metadata.status === 'voting' && lastSessionId.current !== metadata.cardId) {
