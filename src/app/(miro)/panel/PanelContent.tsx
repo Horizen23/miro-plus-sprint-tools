@@ -154,7 +154,7 @@ const AppPanel: React.FC = () => {
     },
   ];
 
-  const contentMap: Record<Tab, React.ReactNode> = {
+  const contentMap: Record<Tab, React.ReactNode> = React.useMemo(() => ({
     tools: (
       <SprintTools
         votingSession={votingSession}
@@ -181,7 +181,11 @@ const AppPanel: React.FC = () => {
     jira: <JiraTools selection={rawSelection} />,
     timesheet: <Timesheet items={selectedItems} />,
     settings: <SettingsView />,
-  };
+  }), [
+    votingSession, handleResetVoting, estimateUnit, setEstimateUnit, summary, 
+    handleAction, isProcessing, handleStartVoting, showGuide, rawSelection, selectedItems,
+    handleSelectAll, handleSelectInView
+  ]);
 
   return (
     <GlobalConfigProvider>

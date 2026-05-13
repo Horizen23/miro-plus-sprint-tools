@@ -203,7 +203,7 @@ export class JiraService {
     });
     if (!response.ok) throw new Error(`Failed to fetch project issue types: ${response.status}`);
     const data = await response.json();
-    cacheUtils.set(CACHE_KEY, data, 3600); // 1 hour cache
+    cacheUtils.set(CACHE_KEY, data, 3600 * 24 * 7); // 7 days cache
     return data;
   }
 

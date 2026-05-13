@@ -1,44 +1,40 @@
 import type { Card, AppCard } from "@mirohq/websdk-types";
 
+// Pre-parse mappings once at the top level to avoid repeated split/map/Number calls
+const HOURS_TO_POINTS_PAIRS = (process.env.NEXT_PUBLIC_HOURS_TO_POINTS_MAPPING || "2:2,4:3,6:5,10:8,16:13,26:21,42:34,68:55,109:89,175:144,283:233,458:377")
+  .split(',')
+  .map(p => p.split(':').map(Number));
+
+const FIBONACCI_SCALE = (process.env.NEXT_PUBLIC_FIBONACCI_SCALE || "0,1,2,3,5,8,13,21,34,55,89,144,233,377")
+  .split(',')
+  .map(Number)
+  .sort((a, b) => b - a);
+
 export const mapHoursToPoints = (h: number): number => {
   if (h <= 0) return 0;
-  
-  // Parse mapping from env: "2:2,4:3,6:5..."
-  const mappingStr = process.env.NEXT_PUBLIC_HOURS_TO_POINTS_MAPPING || "2:2,4:3,6:5,10:8,16:13,26:21,42:34,68:55,109:89,175:144,283:233,458:377";
-  const pairs = mappingStr.split(',').map(p => p.split(':').map(Number));
-  
-  for (const [hourLimit, points] of pairs) {
+  for (const [hourLimit, points] of HOURS_TO_POINTS_PAIRS) {
     if (h <= hourLimit) return points;
   }
-  
   return 0;
 };
 
 export const mapPointsToHours = (p: number): [number, number] => {
   if (p <= 0) return [0, 0];
-  
-  const mappingStr = process.env.NEXT_PUBLIC_HOURS_TO_POINTS_MAPPING || "2:2,4:3,6:5,10:8,16:13,26:21,42:34,68:55,109:89,175:144,283:233,458:377";
-  const pairs = mappingStr.split(',').map(p => p.split(':').map(Number));
-  
   let lowerLimit = 0;
-  for (const [hourLimit, points] of pairs) {
+  for (const [hourLimit, points] of HOURS_TO_POINTS_PAIRS) {
     if (p <= points) {
       return [lowerLimit + 1, hourLimit];
     }
     lowerLimit = hourLimit;
   }
-  
   return [0, 0];
 };
 
 export const getBucketedPoint = (sum: number): number => {
-  const scaleStr = process.env.NEXT_PUBLIC_FIBONACCI_SCALE || "0,1,2,3,5,8,13,21,34,55,89,144,233,377";
-  const scale = scaleStr.split(',').map(Number).sort((a, b) => b - a);
-  
-  for (const f of scale) {
+  for (const f of FIBONACCI_SCALE) {
     if (sum >= f) return f;
   }
-  return sum > 0 ? scale[scale.length - 1] : 0;
+  return sum > 0 ? FIBONACCI_SCALE[FIBONACCI_SCALE.length - 1] : 0;
 };
 
 export interface CardTitleData {
@@ -51,22 +47,30 @@ export interface CardTitleData {
  * Parses a card title into its components: sequence, estimate, and the actual title text.
  * Pattern: [SEQ][EST] Title
  */
+// Pre-compile regular expressions for title parsing to improve O(N) performance
+const RE_HTML = /<[^>]*>/g;
+const RE_NBSP = /&nbsp;/g;
+const RE_QUOTE = /&#39;/g;
+const RE_DQUOTE = /&quot;/g;
+const RE_AMP = /&amp;/g;
+const RE_LT = /&lt;/g;
+const RE_GT = /&gt;/g;
+const RE_MAIN_PATTERN = /^\s*(?:\[([A-Za-z\d.]*)\])?\s*\[(\d+(?:\.\d+)?h?|\?)\]\s*(.*)$/;
+const RE_SINGLE_BRACKET = /^\s*\[(\d+(?:\.\d+)?h?|\?)\]\s*(.*)$/;
+const RE_SEQ_ONLY = /^\s*\[([A-Za-z]+\d+(?:\.\d+)?)\]\s*(.*)$/;
+
 export const parseCardTitle = (title: string): CardTitleData => {
   const rawTitle = (title || "")
-    .replace(/<[^>]*>/g, '') // Remove HTML tags
-    .replace(/&nbsp;/g, ' ') // Decode Non-Breaking Space
-    .replace(/&#39;/g, "'")  // Decode Single Quote
-    .replace(/&quot;/g, '"') // Decode Double Quote
-    .replace(/&amp;/g, '&')  // Decode Ampersand
-    .replace(/&lt;/g, '<')   // Decode Less Than
-    .replace(/&gt;/g, '>')   // Decode Greater Than
-    .replace(/&nbsp;/g, ' ') // Decode Non-breaking Space
+    .replace(RE_HTML, '')
+    .replace(RE_NBSP, ' ')
+    .replace(RE_QUOTE, "'")
+    .replace(RE_DQUOTE, '"')
+    .replace(RE_AMP, '&')
+    .replace(RE_LT, '<')
+    .replace(RE_GT, '>')
     .trim();
 
-  // Optimized pattern: [SEQ][EST] Title
-  const pattern = /^\s*(?:\[([A-Za-z\d.]*)\])?\s*\[(\d+(?:\.\d+)?h?|\?)\]\s*(.*)$/;
-  const match = rawTitle.match(pattern);
-
+  const match = rawTitle.match(RE_MAIN_PATTERN);
   if (match) {
     return {
       seq: match[1] === undefined ? "" : match[1],
@@ -75,16 +79,12 @@ export const parseCardTitle = (title: string): CardTitleData => {
     };
   }
 
-  // Fallback 1: Only one bracket (Assume it's estimate if it's numeric/h/?)
-  const singleBracketPattern = /^\s*\[(\d+(?:\.\d+)?h?|\?)\]\s*(.*)$/;
-  const singleMatch = rawTitle.match(singleBracketPattern);
+  const singleMatch = rawTitle.match(RE_SINGLE_BRACKET);
   if (singleMatch) {
     return { seq: "", estimate: singleMatch[1] || "", cleanTitle: singleMatch[2] || "" };
   }
 
-  // Fallback 2: Sequence only (e.g. [A1.0] Task)
-  const seqOnlyPattern = /^\s*\[([A-Za-z]+\d+(?:\.\d+)?)\]\s*(.*)$/;
-  const seqMatch = rawTitle.match(seqOnlyPattern);
+  const seqMatch = rawTitle.match(RE_SEQ_ONLY);
   if (seqMatch) {
     return { seq: seqMatch[1] || "", estimate: "", cleanTitle: seqMatch[2] || "" };
   }
@@ -156,27 +156,24 @@ export const formatCardTitle = (data: CardTitleData): string => {
   return `${seqPart}${estPart} ${data.cleanTitle}`.trim();
 };
 
-export const handleSetPointsOnItem = async (item: Card | AppCard, points: string) => {
-  const currentTitle = item.title || "";
-  const { seq, cleanTitle } = parseCardTitle(currentTitle);
-  
-  const newEstimate = points === '?' ? '?' : points;
-
-  const newTitleFinal = formatCardTitle({
-    seq: seq, 
-    estimate: newEstimate,
-    cleanTitle: cleanTitle
-  });
-  
+export const handleSetPointsOnItems = async (items: (Card | AppCard)[], points: string) => {
+  if (items.length === 0) return;
+  const itemIds = items.map(i => i.id);
 
   try {
-    const freshItem = await miro.board.getById(item.id) as any;
-    if (freshItem) {
-      freshItem.title = newTitleFinal;
-      await freshItem.sync();
-    }
+    const freshItems = await miro.board.get({ id: itemIds }) as any[];
+    await Promise.all(freshItems.map(async (freshItem) => {
+      const { seq, cleanTitle } = parseCardTitle(freshItem.title || "");
+      freshItem.title = formatCardTitle({
+        seq, 
+        estimate: points === '?' ? '?' : points,
+        cleanTitle
+      });
+      return freshItem.sync();
+    }));
   } catch (e) {
-    console.error("[DEBUG] Sync failed:", e);
+    console.error("[DEBUG] Batch Sync failed:", e);
+    throw e;
   }
 };
 

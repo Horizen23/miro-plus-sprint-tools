@@ -10,6 +10,7 @@ import { useGlobalConfig, GlobalConfig as TimesheetConfig } from "../contexts/Gl
 import { parseUserMapping, isUserOwnerOfCard, getCardMappedUser } from "../utils/mappingUtils";
 import { cacheUtils } from "../utils/cacheUtils";
 import { notify, copyAndNotify } from "../utils/uiUtils";
+import { useDebounce } from "../hooks/useDebounce";
 
 interface TimesheetProps {
   items: (Card | AppCard)[];
@@ -35,7 +36,7 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
         
         if (!info) {
           info = await miro.board.getUserInfo();
-          cacheUtils.set(USER_INFO_CACHE_KEY, info, 3600); // 1 hour
+          cacheUtils.set(USER_INFO_CACHE_KEY, info, 3600 * 24 * 7); // 7 days cache
         }
         setUserInfo(info);
       } catch (e) {}
@@ -47,7 +48,7 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
         
         if (!tags) {
           tags = await miro.board.get({ type: "tag" });
-          cacheUtils.set(CACHE_KEY, tags, 600); // 10 minutes cache
+          cacheUtils.set(CACHE_KEY, tags, 3600 * 24); // 1 day cache
         }
         setAllTags(tags);
       } catch (e) {}
@@ -93,7 +94,7 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
     localStorage.setItem('miro_timesheet_exclude_title', val);
   };
 
-  const generateTimesheet = async (cards: (Card | AppCard)[], currentConfig: TimesheetConfig, onlyMe: boolean, currentFilterTag: string, includeUnassigned: boolean, currentExcludeTitle: string, tags: any[]) => {
+  const generateTimesheet = React.useCallback(async (cards: (Card | AppCard)[], currentConfig: TimesheetConfig, onlyMe: boolean, currentFilterTag: string, includeUnassigned: boolean, currentExcludeTitle: string, tags: any[]) => {
     const grouped: Record<string, { title: string, cardId: string }[]> = {};
     const tagMap = new Map(tags.map(t => [t.id, t.title]));
 
@@ -215,6 +216,8 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
       Object.entries(baseVars).forEach(([name, val]) => {
         finalTitle = finalTitle.replace(new RegExp(`{${name}}`, 'g'), val || "");
       });
+      // Clear any remaining placeholders that weren't matched
+      finalTitle = finalTitle.replace(/\{[^}]+\}/g, "");
 
       // 7. Loop through dates
       while (current <= last) {
@@ -229,18 +232,24 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
     const sortedGrouped: Record<string, { title: string, cardId: string }[]> = {};
     sortedKeys.forEach(key => { sortedGrouped[key] = grouped[key]; });
     return sortedGrouped;
-  };
+  }, [userInfo]);
+
+  const [isPending, startTransition] = React.useTransition();
+  const debouncedFilterTag = useDebounce(filterTag, 300);
+  const debouncedExcludeTitle = useDebounce(excludeTitle, 300);
 
   React.useEffect(() => {
     const refresh = async () => {
       if (isLoading) return;
-      const data = await generateTimesheet(items, config, filterOnlyMe, filterTag, includeUnassigned, excludeTitle, allTags);
-      setTimesheet(data);
+      const data = await generateTimesheet(items, config, filterOnlyMe, debouncedFilterTag, includeUnassigned, debouncedExcludeTitle, allTags);
+      startTransition(() => {
+        setTimesheet(data);
+      });
     };
     refresh();
-  }, [items, config, isLoading, filterOnlyMe, filterTag, includeUnassigned, excludeTitle, allTags]);
+  }, [items, config, isLoading, filterOnlyMe, debouncedFilterTag, includeUnassigned, debouncedExcludeTitle, allTags, generateTimesheet]);
 
-  const handleCopyAll = async () => {
+  const handleCopyAll = React.useCallback(async () => {
     let text = "";
     Object.entries(timesheet).forEach(([date, items]) => {
       const dateObj = new Date(date);
@@ -257,9 +266,9 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
     await copyAndNotify(text.trim(), "Full Timesheet");
     setCopying(true);
     setTimeout(() => setCopying(false), 2000);
-  };
+  }, [timesheet]);
 
-  const handleCopyJson = async () => {
+  const handleCopyJson = React.useCallback(async () => {
     const flatData: { date: string, title: string, cardId: string }[] = [];
     Object.entries(timesheet).forEach(([date, items]) => {
       items.forEach(item => {
@@ -268,9 +277,9 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
     });
     
     await copyAndNotify(JSON.stringify(flatData), "JSON Data");
-  };
+  }, [timesheet]);
 
-  const handleCopyDay = async (date: string, dayItems: { title: string }[]) => {
+  const handleCopyDay = React.useCallback(async (date: string, dayItems: { title: string }[]) => {
     const dateObj = new Date(date);
     const thaiDate = dateObj.toLocaleDateString('th-TH', { 
       weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'
@@ -280,14 +289,54 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
       text += `- ${item.title}\n`;
     });
     await copyAndNotify(text.trim(), `Timesheet for ${thaiDate}`);
-  };
+  }, []);
 
-  const zoomToCard = async (id: string) => {
+  const zoomToCard = React.useCallback(async (id: string) => {
     try {
       await miro.board.viewport.zoomTo(await miro.board.get({ id }));
       await miro.board.select({ id });
     } catch (e) {}
-  };
+  }, []);
+
+  const renderedTimesheet = React.useMemo(() => (
+    Object.entries(timesheet).map(([date, dayItems]) => {
+      const dateObj = new Date(date);
+      const thaiDate = dateObj.toLocaleDateString('th-TH', { 
+        weekday: 'short', day: 'numeric', month: 'short'
+      });
+
+      return (
+        <div key={date} className="timesheet-group">
+          <div className="date-header">
+            <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+              <span className="date-value">{thaiDate}</span>
+              <span className="card-count">{dayItems.length} รายการ</span>
+            </div>
+            <button 
+              className="btn-tiny-copy"
+              title="Copy this day"
+              onClick={() => handleCopyDay(date, dayItems)}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+          </div>
+          <div className="titles-container">
+            {dayItems.map((item, idx) => (
+              <ListItem 
+                key={`${date}-${idx}`} 
+                title={item.title}
+                showBullet
+                onClick={() => zoomToCard(item.cardId)}
+              />
+            ))}
+          </div>
+        </div>
+      );
+    })
+  ), [timesheet, handleCopyDay, zoomToCard]);
 
   if (isLoading) return <div className="loading">Loading...</div>;
 
@@ -314,12 +363,12 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
               <InputField 
                 placeholder="Filter by Tag (e.g. Sprint-21)"
                 value={filterTag}
-                onChange={(e) => updatePersonalTag(e.target.value)}
+                onChange={(e: any) => updatePersonalTag(e.target.value)}
               />
               <InputField 
                 placeholder="Exclude Title (e.g. Holiday|Leave)"
                 value={excludeTitle}
-                onChange={(e) => updatePersonalExcludeTitle(e.target.value)}
+                onChange={(e: any) => updatePersonalExcludeTitle(e.target.value)}
               />
               <div style={{ marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <InputField 
@@ -377,44 +426,8 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
             </div>
           </div>
           
-          <div className="timesheet-list">
-            {Object.entries(timesheet).map(([date, dayItems]) => {
-              const dateObj = new Date(date);
-              const thaiDate = dateObj.toLocaleDateString('th-TH', { 
-                weekday: 'short', day: 'numeric', month: 'short'
-              });
-
-              return (
-                <div key={date} className="timesheet-group">
-                  <div className="date-header">
-                    <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                      <span className="date-value">{thaiDate}</span>
-                      <span className="card-count">{dayItems.length} รายการ</span>
-                    </div>
-                    <button 
-                      className="btn-tiny-copy"
-                      title="Copy this day"
-                      onClick={() => handleCopyDay(date, dayItems)}
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                      </svg>
-                    </button>
-                  </div>
-                  <div className="titles-container">
-                    {dayItems.map((item, idx) => (
-                      <ListItem 
-                        key={`${date}-${idx}`} 
-                        title={item.title}
-                        showBullet
-                        onClick={() => zoomToCard(item.cardId)}
-                      />
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
+          <div className={`timesheet-list ${isPending ? 'pending-update' : ''}`} style={{ opacity: isPending ? 0.6 : 1, transition: 'opacity 0.2s ease' }}>
+            {renderedTimesheet}
           </div>
         </section>
       ) : (

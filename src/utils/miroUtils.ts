@@ -239,7 +239,13 @@ export async function handleCreateRefinementFrame() {
       }
 
       // Get all existing tags once
-      const allTags = await miro.board.get({ type: 'tag' });
+      const TAGS_CACHE_KEY = 'miro_tags_cache';
+      const TAGS_CACHE_TIME = 24 * 3600 * 1000;
+      let allTags = (window as any)[TAGS_CACHE_KEY]?.data;
+      if (!allTags || Date.now() - ((window as any)[TAGS_CACHE_KEY]?.timestamp || 0) > TAGS_CACHE_TIME) {
+        allTags = await miro.board.get({ type: 'tag' });
+        (window as any)[TAGS_CACHE_KEY] = { data: allTags, timestamp: Date.now() };
+      }
 
       // 3. Get or Create Test-Frame Tag
       let testFrameTag = allTags.find((t: any) => t.title === 'Test-Frame');

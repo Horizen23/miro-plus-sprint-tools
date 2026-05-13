@@ -120,7 +120,13 @@ export const SettingsView: React.FC = () => {
                 <div style={{ opacity: 0.6, marginBottom: '4px' }}>Data Caches (API Acceleration):</div>
                 <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                   {cacheInfo.map((c: any) => {
-                    const remaining = Math.max(0, Math.round((c.expiry - Date.now()) / 1000 / 60));
+                    const minutes = Math.max(0, Math.round((c.expiry - Date.now()) / 1000 / 60));
+                    const formatTime = (m: number) => {
+                      if (m >= 1440) return `${Math.round(m / 1440)}d`;
+                      if (m >= 60) return `${Math.round(m / 60)}h`;
+                      return `${m}m`;
+                    };
+                    
                     return (
                       <span key={c.name} style={{ 
                         background: '#008f5d', 
@@ -131,7 +137,7 @@ export const SettingsView: React.FC = () => {
                         fontWeight: 600,
                         boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
                       }}>
-                        {c.name} ({remaining}m)
+                        {c.name} ({formatTime(minutes)})
                       </span>
                     );
                   })}

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import type { Card, AppCard, Item } from "@mirohq/websdk-types";
-import { handleSetPointsOnItem, calculateSelectionSummary } from "../utils/estimationUtils";
+import { handleSetPointsOnItems, calculateSelectionSummary } from "../utils/estimationUtils";
 
 export function useSprintSelection() {
   const [isProcessing, setIsProcessing] = useState(false);
@@ -17,11 +17,12 @@ export function useSprintSelection() {
     const fetchSelection = async () => {
       try {
         const items = await miro.board.getSelection();
+        const filteredItems = items.filter(item => item.type === 'card' || item.type === 'app_card');
         if (!unmounted) {
           setRawSelection(prev => {
             const prevIds = prev.map(i => i.id).join(',');
-            const newIds = items.map(i => i.id).join(',');
-            return prevIds === newIds ? prev : items;
+            const newIds = filteredItems.map(i => i.id).join(',');
+            return prevIds === newIds ? prev : filteredItems;
           });
         }
       } catch (e) {
@@ -31,13 +32,18 @@ export function useSprintSelection() {
     
     fetchSelection();
     
+    let updateTimer: NodeJS.Timeout;
     const handleUpdate = async () => {
-      await fetchSelection();
+      clearTimeout(updateTimer);
+      updateTimer = setTimeout(async () => {
+        await fetchSelection();
+      }, 200); // 200ms debounce
     };
     
     miro.board.ui.on('selection:update', handleUpdate);
     return () => {
       unmounted = true;
+      clearTimeout(updateTimer);
       miro.board.ui.off('selection:update', handleUpdate);
     };
   }, []);
@@ -90,12 +96,9 @@ export function useSprintSelection() {
 
     setIsProcessing(true);
     try {
-      for (const item of items) {
-        await handleSetPointsOnItem(item, points.endsWith('h') || estimateUnit === 'h' ? (points.endsWith('h') ? points : points + 'h') : points);
-      }
+      await handleSetPointsOnItems(items, points.endsWith('h') || estimateUnit === 'h' ? (points.endsWith('h') ? points : points + 'h') : points);
       await miro.board.notifications.showInfo(`Updated ${items.length} items`);
     } catch (e) {
-
       await miro.board.notifications.showError("Failed to update points");
     } finally {
       setIsProcessing(false);

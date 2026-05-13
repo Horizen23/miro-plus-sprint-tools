@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useGlobalConfig } from "../contexts/GlobalConfigContext";
 import { parseUserMapping } from "../utils/mappingUtils";
+import { parseCardTitle } from "../utils/estimationUtils";
 
 export interface SelectedCard {
   id: string;
@@ -18,16 +19,25 @@ export interface SelectedCard {
   y: number;
 }
 
+// Pre-compile Regex for plain text conversion to improve O(N) performance
+const RE_BR = /<br\s*\/?>/gi;
+const RE_BLOCK_END = /<\/p>|<\/div>|<\/ul>|<\/ol>/gi;
+const RE_LI = /<li[^>]*>/gi;
+const RE_NBSP_G = /&nbsp;/g;
+const RE_TAGS = /<[^>]*>/g;
+const RE_EMPTY_LI = /\n-\s*(?=\n|$)/g;
+const RE_MULTI_NEWLINE = /\n+/g;
+
 const htmlToPlainText = (html?: string) => {
   if (!html) return "";
   let text = html;
-  text = text.replace(/<br\s*\/?>/gi, '\n');
-  text = text.replace(/<\/p>|<\/div>|<\/ul>|<\/ol>/gi, '\n');
-  text = text.replace(/<li[^>]*>/gi, '\n- ');
-  text = text.replace(/&nbsp;/g, ' ');
-  text = text.replace(/<[^>]*>/g, '');
-  text = text.replace(/\n-\s*(?=\n|$)/g, '');
-  text = text.replace(/\n+/g, '\n');
+  text = text.replace(RE_BR, '\n');
+  text = text.replace(RE_BLOCK_END, '\n');
+  text = text.replace(RE_LI, '\n- ');
+  text = text.replace(RE_NBSP_G, ' ');
+  text = text.replace(RE_TAGS, '');
+  text = text.replace(RE_EMPTY_LI, '');
+  text = text.replace(RE_MULTI_NEWLINE, '\n');
   return text.trim();
 };
 
@@ -35,41 +45,96 @@ export function useJiraDetection(selection: any[], appParentKey: string) {
   const { config: globalConfig } = useGlobalConfig();
   const [selectedCards, setSelectedCards] = React.useState<SelectedCard[]>([]);
   const [checkedIds, setCheckedIds] = React.useState<Set<string>>(new Set());
+  
+  // Computational Cache to store results of expensive string operations
+  const parseCache = React.useRef<Record<string, { title: string, desc: string, parsed: any }>>({});
+  const lastSelectedIds = React.useRef<Set<string>>(new Set());
 
-  const selectionIds = selection.map(item => item.id).join(',');
+  const clearCache = React.useCallback(() => {
+    parseCache.current = {};
+    lastSelectedIds.current = new Set();
+  }, []);
+
+  const normalize = (text?: string) => {
+    if (!text) return "";
+    const jiraStampRegex = /---(?:\s|<[^>]+>)*Jira/i;
+    let clean = text.split(jiraStampRegex)[0];
+    return clean
+      .replace(/<br\s*\/?>|<\/p>|<\/div>|<\/li>/gi, ' ')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/&nbsp;/g, ' ') 
+      .replace(/[\r\n]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const selectionIds = React.useMemo(() => 
+    selection.map(item => item.id).join(',')
+  , [selection]);
 
   const detectSelection = React.useCallback(async () => {
     try {
-      const tags = await miro.board.get({ type: 'tag' });
+      // 1. Get Tags with a simple 5-second cache to avoid redundant SDK calls
+      const CACHE_KEY = 'miro_tags_cache';
+      const CACHE_TIME = 24 * 3600 * 1000; // 1 day in ms
+      let tags = (window as any)[CACHE_KEY]?.data;
+      const lastFetch = (window as any)[CACHE_KEY]?.timestamp || 0;
+
+      if (!tags || Date.now() - lastFetch > CACHE_TIME) {
+        tags = await miro.board.get({ type: 'tag' });
+        (window as any)[CACHE_KEY] = { data: tags, timestamp: Date.now() };
+      }
+
+      const tagMap = new Map(tags.map((t: any) => [t.id, t.title]));
+      const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
+
+      // Optimization: Fetch all metadata in parallel before the loop
+      const metadataResults = await Promise.all(
+        selection.map(item => (item as any).getMetadata ? (item as any).getMetadata(metadataKey) : null)
+      );
+
       const items: SelectedCard[] = [];
       
-      for (const item of selection) {
+      for (let i = 0; i < selection.length; i++) {
+        const item = selection[i];
         if (item.type !== 'card' && item.type !== 'app_card') continue;
         
         const itemAny = item as any;
-        const itemTags = tags.filter(t => itemAny.tagIds?.includes(t.id));
-        const jiraTag = itemTags.find(t => t.title.toLowerCase().startsWith('jira-'));
+        const syncedInfo = metadataResults[i];
+        
+        const cardTagTitles = (itemAny.tagIds || [])
+          .map((id: string) => tagMap.get(id))
+          .filter(Boolean) as string[];
+        const jiraTagTitle = cardTagTitles.find(title => title.toLowerCase().startsWith('jira-'));
         
         let detectedParentKey = undefined;
-        if (jiraTag) {
-          const tagValue = jiraTag.title.split('-').slice(1).join('-').toUpperCase();
+        if (jiraTagTitle) {
+          const tagValue = jiraTagTitle.split('-').slice(1).join('-').toUpperCase();
           const prefix = globalConfig?.jiraPrefix || "FTDGENERIC";
           detectedParentKey = tagValue.includes('-') ? tagValue : `${prefix}-${tagValue}`;
         }
-        
-        let syncedInfo: any = null;
-        if (itemAny.getMetadata) {
-          const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
-          syncedInfo = await itemAny.getMetadata(metadataKey);
-        }
 
-        let cleanDesc = itemAny.description || "";
-        cleanDesc = cleanDesc.split('---<br><strong>Jira')[0].replace(/(<p[^>]*>|<br\s*\/?>|\s)*$/, '');
+        let cleanDescRaw = itemAny.description || "";
+        // Much safer regex: Look for --- followed by any tags/spaces and then Jira
+        const jiraStampRegex = /---(?:\s|<[^>]+>)*Jira/i;
+        cleanDescRaw = cleanDescRaw.split(jiraStampRegex)[0].replace(/(<p[^>]*>|<br\s*\/?>|\s)*$/, '');
+
+        // Caching Logic: Skip parsing if we already have the result for this exact card content
+        let parsedTitle, cleanDesc;
+        if (parseCache.current[item.id] && parseCache.current[item.id].title === itemAny.title && parseCache.current[item.id].desc === itemAny.description) {
+          const cached = parseCache.current[item.id];
+          parsedTitle = cached.parsed;
+          cleanDesc = cached.desc;
+        } else {
+          parsedTitle = parseCardTitle(itemAny.title || "");
+          cleanDesc = htmlToPlainText(cleanDescRaw);
+          parseCache.current[item.id] = { title: itemAny.title, desc: itemAny.description, parsed: parsedTitle };
+        }
 
         items.push({
           id: item.id, type: item.type,
-          title: (itemAny.title || "").replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' '),
-          description: htmlToPlainText(cleanDesc),
+          title: parsedTitle.cleanTitle,
+          description: cleanDesc,
           startDate: itemAny.startDate,
           dueDate: itemAny.dueDate,
           assigneeId: itemAny.assignee?.userId,
@@ -80,42 +145,44 @@ export function useJiraDetection(selection: any[], appParentKey: string) {
           x: itemAny.x, y: itemAny.y
         });
       }
+      // Smart Auto-check logic: only for NEWLY added items that are valid/changed
+      setCheckedIds(prev => {
+        const next = new Set(prev);
+        items.forEach(item => {
+          if (!lastSelectedIds.current.has(item.id)) {
+            const isCreateValid = !!(appParentKey || item.detectedParentKey);
+            const isSynced = !!item.syncedKey;
+            const hasChanged = isSynced && (
+              normalize(item.title) !== normalize(item.lastSyncedTitle) || 
+              normalize(item.description) !== normalize(item.lastSyncedDesc)
+            );
+
+            if ((isCreateValid && !isSynced) || hasChanged) {
+              next.add(item.id);
+            }
+          }
+        });
+        
+        // Clean up: remove IDs that are no longer in the selection
+        const currentIds = new Set(items.map(i => i.id));
+        const finalNext = new Set<string>();
+        next.forEach(id => {
+          if (currentIds.has(id)) finalNext.add(id);
+        });
+
+        lastSelectedIds.current = currentIds;
+        return finalNext;
+      });
+
       setSelectedCards(items);
     } catch (e) {
       console.error("[useJiraDetection] Error:", e);
     }
-  }, [selection, globalConfig?.jiraPrefix]);
+  }, [selection, globalConfig?.jiraPrefix, appParentKey]);
 
   React.useEffect(() => {
     detectSelection();
   }, [selectionIds, detectSelection]);
-
-  // Automatic Checkbox Logic
-  React.useEffect(() => {
-    setCheckedIds(prev => {
-      const currentIds = new Set(selectedCards.map(c => c.id));
-      const nextChecked = new Set<string>();
-      let changed = false;
-
-      prev.forEach(id => {
-        if (currentIds.has(id)) nextChecked.add(id);
-        else changed = true;
-      });
-
-      selectedCards.forEach(c => {
-        const isCreateValid = !!(appParentKey || c.detectedParentKey);
-        const isSynced = !!c.syncedKey;
-        const hasChanged = isSynced && (c.title !== c.lastSyncedTitle || c.description !== c.lastSyncedDesc);
-
-        if (((isCreateValid && !isSynced) || hasChanged) && !nextChecked.has(c.id)) {
-          nextChecked.add(c.id);
-          changed = true;
-        }
-      });
-
-      return changed ? nextChecked : prev;
-    });
-  }, [selectedCards, appParentKey]);
 
   const toggleCheck = (cardId: string) => {
     const card = selectedCards.find(c => c.id === cardId);
@@ -145,15 +212,18 @@ export function useJiraDetection(selection: any[], appParentKey: string) {
     }
   };
 
-  const validItemsCount = selectedCards.filter(c => !!(appParentKey || c.detectedParentKey) || !!c.syncedKey).length;
+  const validItemsCount = React.useMemo(() => 
+    selectedCards.filter(c => !!(appParentKey || c.detectedParentKey) || !!c.syncedKey).length,
+  [selectedCards, appParentKey]);
 
-  return {
+  return React.useMemo(() => ({
     selectedCards,
     checkedIds,
     setCheckedIds,
     detectSelection,
     toggleCheck,
     handleSelectAll,
-    validItemsCount
-  };
+    validItemsCount,
+    clearCache
+  }), [selectedCards, checkedIds, detectSelection, toggleCheck, handleSelectAll, validItemsCount, clearCache]);
 }

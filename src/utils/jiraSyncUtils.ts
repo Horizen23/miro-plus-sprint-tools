@@ -23,13 +23,19 @@ export async function detectJiraKeys(item: Card | AppCard): Promise<string[]> {
 
   // Fallback: Look for tags starting with 'Jira-' or project prefix
   try {
-    const tags = await miro.board.get({ type: 'tag' });
-    const itemTags = tags.filter(t => (item as any).tagIds?.includes(t.id)).map(t => t.title);
+    const TAGS_CACHE_KEY = 'miro_tags_cache';
+    const TAGS_CACHE_TIME = 24 * 3600 * 1000;
+    let tags = (window as any)[TAGS_CACHE_KEY]?.data;
+    if (!tags || Date.now() - ((window as any)[TAGS_CACHE_KEY]?.timestamp || 0) > TAGS_CACHE_TIME) {
+      tags = await miro.board.get({ type: 'tag' });
+      (window as any)[TAGS_CACHE_KEY] = { data: tags, timestamp: Date.now() };
+    }
+    const itemTags = tags.filter((t: any) => (item as any).tagIds?.includes(t.id)).map((t: any) => t.title);
     
     const projectPrefix = process.env.NEXT_PUBLIC_JIRA_PROJECT_PREFIX || "";
     const keys: string[] = [];
     
-    itemTags.forEach(tag => {
+    itemTags.forEach((tag: any) => {
       // Format 1: Jira-KEY-123
       if (tag.toLowerCase().startsWith('jira-')) {
         keys.push(tag.substring(5).toUpperCase());
@@ -80,7 +86,7 @@ export async function resolveJiraAssignees(
         if (foundUsers && foundUsers.length > 0) {
           const accountId = foundUsers[0].accountId;
           targetAssignees.push(accountId);
-          cacheUtils.set(USER_CACHE_KEY, accountId, 3600);
+          cacheUtils.set(USER_CACHE_KEY, accountId, 3600 * 24 * 7); // 7 days cache
         }
       } catch (e) {}
     }

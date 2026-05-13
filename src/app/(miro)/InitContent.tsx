@@ -51,11 +51,12 @@ const createStatusHandler = (status: 'to-do' | 'in-progress' | 'done', boardId: 
   let allBoardTags: any[] = [];
 
   try {
-    const TAGS_CACHE_KEY = `miro_cache_tags_${boardId}`;
-    let cachedTags = cacheUtils.get<any[]>(TAGS_CACHE_KEY);
-    if (!cachedTags) {
+    const TAGS_CACHE_KEY = 'miro_tags_cache';
+    const TAGS_CACHE_TIME = 24 * 3600 * 1000;
+    let cachedTags = (window as any)[TAGS_CACHE_KEY]?.data;
+    if (!cachedTags || Date.now() - ((window as any)[TAGS_CACHE_KEY]?.timestamp || 0) > TAGS_CACHE_TIME) {
       cachedTags = await miro.board.get({ type: 'tag' }).catch(() => []);
-      cacheUtils.set(TAGS_CACHE_KEY, cachedTags, 600);
+      (window as any)[TAGS_CACHE_KEY] = { data: cachedTags, timestamp: Date.now() };
     }
     allBoardTags = cachedTags!;
     globalMapping = parseUserMapping(activeConfig?.tsUserMapping || "");

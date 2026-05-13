@@ -1,0 +1,21 @@
+import * as React from "react";
+
+/**
+ * A custom hook that returns a debounced version of the provided value.
+ * Useful for limiting the rate at which an effect or API call is triggered.
+ */
+export function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = React.useState<T>(value);
+
+  React.useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
+}
