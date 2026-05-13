@@ -5,11 +5,15 @@ interface SprintActionsProps {
   handleSelectAll: () => void;
   handleSelectInView: () => void;
   handleStartVoting: () => void;
-  handleAction: (fn: () => Promise<any>) => void;
+  handleAction: (name: string, fn: () => Promise<any>) => void;
+  activeAction: string | null;
   handleCreateRefinementFrame: () => Promise<any>;
   handleDuplicateAndLink: () => Promise<any>;
   handleRemoveLinks: () => Promise<any>;
   handleReorderSelectedCards: () => Promise<any>;
+  handleSyncMetadataFromParent: () => Promise<any>;
+  handleClearMetadata: () => Promise<any>;
+  handleInspectMetadata: () => Promise<any>;
   isProcessing: boolean;
   itemCount: number;
   showGuide: boolean;
@@ -23,10 +27,14 @@ export const SprintActions: React.FC<SprintActionsProps> = ({
   handleSelectInView,
   handleStartVoting,
   handleAction,
+  activeAction,
   handleCreateRefinementFrame,
   handleDuplicateAndLink,
   handleRemoveLinks,
   handleReorderSelectedCards,
+  handleSyncMetadataFromParent,
+  handleClearMetadata,
+  handleInspectMetadata,
   isProcessing,
   itemCount,
   showGuide,
@@ -79,9 +87,10 @@ export const SprintActions: React.FC<SprintActionsProps> = ({
         )}
         <Button 
           variant="secondary" 
-          onClick={() => handleAction(handleCreateRefinementFrame)}
+          loading={activeAction === 'refine'}
+          onClick={() => handleAction('refine', handleCreateRefinementFrame)}
           fullWidth
-          disabled={isProcessing}
+          disabled={isProcessing && activeAction !== 'refine'}
           icon={(
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
@@ -95,10 +104,10 @@ export const SprintActions: React.FC<SprintActionsProps> = ({
       
       <div style={{display: 'flex', gap: '8px', marginTop: '8px'}}>
         <Button 
-          loading={isProcessing}
-          onClick={() => handleAction(handleDuplicateAndLink)}
+          loading={activeAction === 'duplicate'}
+          onClick={() => handleAction('duplicate', handleDuplicateAndLink)}
           fullWidth
-          disabled={itemCount === 0}
+          disabled={(isProcessing && activeAction !== 'duplicate') || itemCount === 0}
           icon={(
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
@@ -111,10 +120,10 @@ export const SprintActions: React.FC<SprintActionsProps> = ({
 
         <Button 
           variant="secondary"
-          loading={isProcessing}
-          onClick={() => handleAction(handleRemoveLinks)}
+          loading={activeAction === 'unlink'}
+          onClick={() => handleAction('unlink', handleRemoveLinks)}
           fullWidth
-          disabled={itemCount === 0}
+          disabled={(isProcessing && activeAction !== 'unlink') || itemCount === 0}
           icon={(
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
@@ -129,11 +138,11 @@ export const SprintActions: React.FC<SprintActionsProps> = ({
 
       <Button 
         variant="secondary"
-        loading={isProcessing}
-        onClick={() => handleAction(handleReorderSelectedCards)}
+        loading={activeAction === 'reorder'}
+        onClick={() => handleAction('reorder', handleReorderSelectedCards)}
         fullWidth
         style={{marginTop: '8px'}}
-        disabled={itemCount === 0}
+        disabled={(isProcessing && activeAction !== 'reorder') || itemCount === 0}
         icon={(
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="m21 16-4 4-4-4"></path>
@@ -144,6 +153,60 @@ export const SprintActions: React.FC<SprintActionsProps> = ({
         )}
       >
         Reorder by Sequence
+      </Button>
+      
+      <Button 
+        variant="secondary"
+        loading={activeAction === 'sync'}
+        onClick={() => handleAction('sync', handleSyncMetadataFromParent)}
+        fullWidth
+        style={{marginTop: '8px', borderStyle: 'dashed'}}
+        disabled={(isProcessing && activeAction !== 'sync') || itemCount === 0}
+        icon={(
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 2v6h-6"></path>
+            <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+            <path d="M3 22v-6h6"></path>
+            <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+          </svg>
+        )}
+      >
+        Sync Metadata from Parent
+      </Button>
+
+      <Button 
+        variant="secondary"
+        loading={activeAction === 'clear'}
+        onClick={() => handleAction('clear', handleClearMetadata)}
+        fullWidth
+        style={{marginTop: '8px', borderStyle: 'dotted'}}
+        disabled={(isProcessing && activeAction !== 'clear') || itemCount === 0}
+        icon={(
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 6h18"></path>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+        )}
+      >
+        Clear Metadata
+      </Button>
+
+      <Button 
+        variant="secondary"
+        loading={activeAction === 'inspect'}
+        onClick={() => handleAction('inspect', handleInspectMetadata)}
+        fullWidth
+        style={{marginTop: '8px', borderStyle: 'dotted'}}
+        disabled={isProcessing && activeAction !== 'inspect'}
+        icon={(
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+        )}
+      >
+        Inspect Metadata
       </Button>
 
       <div className="reference-guide">

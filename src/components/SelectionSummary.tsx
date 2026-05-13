@@ -10,7 +10,7 @@ interface SelectionSummaryProps {
     hourRange: [number, number];
     actualHours: number;
   };
-  handleAction: (fn: () => Promise<any>) => void;
+  handleAction: (name: string, fn: () => Promise<any>) => void;
   handleCreateSticky: (notes: string[], parentFrameId?: string) => Promise<any>;
 }
 
@@ -42,7 +42,7 @@ export const SelectionSummary: React.FC<SelectionSummaryProps> = ({
               <Button 
                 variant="icon" 
                 title="Create Black Sticky Notes for Points & Hours"
-                onClick={() => handleAction(async () => {
+                onClick={() => handleAction('create-sticky', async () => {
                   const selection = await miro.board.getSelection();
                   const parentId = (selection[0] as any)?.parentId;
                   const notes = [`${summary.points}pt`];

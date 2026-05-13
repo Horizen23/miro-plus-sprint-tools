@@ -3,12 +3,14 @@ import type { Card, AppCard, Item } from "@mirohq/websdk-types";
 import { handleSetPointsOnItems, calculateSelectionSummary } from "../utils/estimationUtils";
 
 export function useSprintSelection() {
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [activeAction, setActiveAction] = useState<string | null>(null);
+  const [manualProcessing, setManualProcessing] = useState(false);
+  const isProcessing = !!activeAction || manualProcessing;
+  
   const [estimateUnit, setEstimateUnit] = useState<'pt' | 'h'>(
     (process.env.NEXT_PUBLIC_DEFAULT_ESTIMATE_UNIT as 'pt' | 'h') || 'pt'
   );
   
-  // 1. Get raw selection using a stable custom implementation instead of the buggy @mirohq hook
   const [rawSelection, setRawSelection] = useState<Item[]>([]);
   
   useEffect(() => {
@@ -37,7 +39,7 @@ export function useSprintSelection() {
       clearTimeout(updateTimer);
       updateTimer = setTimeout(async () => {
         await fetchSelection();
-      }, 200); // 200ms debounce
+      }, 200);
     };
     
     miro.board.ui.on('selection:update', handleUpdate);
@@ -48,43 +50,33 @@ export function useSprintSelection() {
     };
   }, []);
   
-  const rawSelectionIds = rawSelection.map((item: Item) => item.id).join(',');
-
-  // 2. Filter the selection reactively
   const selectedItems = useMemo(() => {
     return rawSelection.filter((item: Item) => item.type === 'card' || item.type === 'app_card') as (Card | AppCard)[];
-  }, [rawSelectionIds]);
+  }, [rawSelection]);
 
-  const selectedItemsIds = selectedItems.map(item => item.id).join(',');
-
-  // 3. Compute the summary reactively based on selected items
   const summary = useMemo(() => {
     return calculateSelectionSummary(selectedItems);
-  }, [selectedItemsIds]);
+  }, [selectedItems]);
 
-  // 4. Track memoized items for when selection is lost
   const [memoizedItems, setMemoizedItems] = useState<(Card | AppCard)[]>([]);
 
   useEffect(() => {
     if (selectedItems.length > 0) {
       setMemoizedItems(selectedItems);
     }
-  }, [selectedItemsIds]);
+  }, [selectedItems]);
 
-  const updateSummary = async () => {
-    // This function is kept for backward compatibility, but state is now reactive!
-    // However, if manual refresh is needed, we can just rely on the reactivity.
-    // If you need to force re-calculate, it's already done by useMemo.
+  const handleAction = async (actionName: string, fn: () => Promise<any>) => {
+    setActiveAction(actionName);
+    try {
+      await fn();
+    } finally {
+      setActiveAction(null);
+    }
   };
 
   const handleSetPoints = async (points: string, itemsToUpdate?: (Card | AppCard)[]) => {
-    let items = itemsToUpdate;
-    
-    if (!items) {
-      items = selectedItems;
-    }
-
-    // Fallback to memoized items if selection is empty
+    let items = itemsToUpdate || selectedItems;
     if ((!items || items.length === 0) && memoizedItems.length > 0) {
       items = memoizedItems;
     }
@@ -94,38 +86,53 @@ export function useSprintSelection() {
       return;
     }
 
-    setIsProcessing(true);
+    setActiveAction('set-points');
     try {
       await handleSetPointsOnItems(items, points.endsWith('h') || estimateUnit === 'h' ? (points.endsWith('h') ? points : points + 'h') : points);
       await miro.board.notifications.showInfo(`Updated ${items.length} items`);
     } catch (e) {
       await miro.board.notifications.showError("Failed to update points");
     } finally {
-      setIsProcessing(false);
+      setActiveAction(null);
     }
   };
 
-  const handleAction = async (fn: () => Promise<void>) => {
-    setIsProcessing(true);
+  const [inspectedMetadata, setInspectedMetadata] = useState<{title: string, data: any}[] | null>(null);
+
+  const handleInspectMetadata = async () => {
+    if (selectedItems.length === 0) {
+      await miro.board.notifications.showError("Please select at least one card to inspect metadata");
+      return;
+    }
+    
+    setActiveAction('inspect');
     try {
-      await fn();
+      const results = await Promise.all(selectedItems.map(async (card) => {
+        const metadata = await card.getMetadata();
+        return { title: card.title || "Untitled", data: metadata };
+      }));
+      setInspectedMetadata(results);
+    } catch (e) {
+      await miro.board.notifications.showError("Failed to fetch metadata");
     } finally {
-      setIsProcessing(false);
+      setActiveAction(null);
     }
   };
 
   return {
     isProcessing,
-    setIsProcessing,
+    setIsProcessing: setManualProcessing,
+    activeAction,
     estimateUnit,
     setEstimateUnit,
     summary,
     selectedItems,
     memoizedItems,
     rawSelection,
-    updateSummary, // kept so other components don't break
     handleSetPoints,
-    handleAction
+    handleAction,
+    handleInspectMetadata,
+    inspectedMetadata,
+    setInspectedMetadata
   };
 }
-

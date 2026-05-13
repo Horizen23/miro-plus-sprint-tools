@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import { Timesheet } from '@/views/Timesheet';
 import { JiraTools } from '@/views/JiraTools';
 import { TabNav, TabItem } from '@/components/TabNav';
@@ -13,6 +14,8 @@ import {
   handleCreateSticky,
   handleRemoveLinks,
   handleReorderSelectedCards,
+  handleSyncMetadataFromParent,
+  handleClearMetadata,
 } from '@/utils/miroUtils';
 import {
   handleSelectAll,
@@ -31,6 +34,7 @@ const AppPanel: React.FC = () => {
   const {
     isProcessing,
     setIsProcessing,
+    activeAction,
     estimateUnit,
     setEstimateUnit,
     summary,
@@ -39,6 +43,9 @@ const AppPanel: React.FC = () => {
     rawSelection,
     handleSetPoints,
     handleAction,
+    handleInspectMetadata,
+    inspectedMetadata,
+    setInspectedMetadata
   } = useSprintSelection();
 
   const { votingSession, handleStartVoting, handleResetVoting } =
@@ -163,6 +170,7 @@ const AppPanel: React.FC = () => {
         setEstimateUnit={setEstimateUnit}
         summary={summary}
         handleAction={handleAction}
+        activeAction={activeAction}
         handleCreateSticky={handleCreateSticky}
         handleSetPoints={handleSetPoints}
         isProcessing={isProcessing}
@@ -171,6 +179,11 @@ const AppPanel: React.FC = () => {
         handleDuplicateAndLink={handleDuplicateAndLink}
         handleRemoveLinks={handleRemoveLinks}
         handleReorderSelectedCards={handleReorderSelectedCards}
+        handleSyncMetadataFromParent={handleSyncMetadataFromParent}
+        handleClearMetadata={handleClearMetadata}
+        handleInspectMetadata={handleInspectMetadata}
+        inspectedMetadata={inspectedMetadata}
+        setInspectedMetadata={setInspectedMetadata}
         showGuide={showGuide}
         setShowGuide={setShowGuide}
         handleSelectAll={handleSelectAll}

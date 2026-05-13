@@ -41,14 +41,9 @@ export const Button: React.FC<ButtonProps> = ({
       disabled={disabled || loading}
       {...props}
     >
-      {loading ? (
-        <span className="spinner"></span>
-      ) : (
-        <>
-          {icon}
-          {children}
-        </>
-      )}
+      {loading && <span className="spinner" style={{ marginRight: children ? '8px' : '0' }}></span>}
+      {!loading && icon}
+      {children}
     </button>
   );
 };

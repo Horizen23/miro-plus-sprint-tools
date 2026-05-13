@@ -183,6 +183,81 @@ export async function handleRemoveLinks() {
   await notify(`Removed links from ${count} card(s)`);
 }
 
+/**
+ * Temporary feature: Copies metadata from parent card (via linkedTo) to selected cards.
+ */
+export async function handleSyncMetadataFromParent() {
+  const selection = await miro.board.getSelection();
+  const cards = selection.filter(i => i.type === 'card' || i.type === 'app_card') as (Card | AppCard)[];
+
+  if (cards.length === 0) {
+    await notify("Please select at least one card to sync metadata", "error");
+    return;
+  }
+
+  const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
+  let count = 0;
+
+  for (const card of cards) {
+    const linkedTo = card.linkedTo;
+    if (!linkedTo || typeof linkedTo !== 'string') continue;
+
+    try {
+      // Extract widget ID from Miro URL (?moveToWidget=...)
+      const url = new URL(linkedTo);
+      const parentId = url.searchParams.get('moveToWidget');
+
+      if (parentId) {
+        const parent = await miro.board.getById(parentId);
+        if (parent && (parent.type === 'card' || parent.type === 'app_card')) {
+          const metadata = await parent.getMetadata(metadataKey);
+          if (metadata && Object.keys(metadata).length > 0) {
+            await card.setMetadata(metadataKey, metadata);
+            count++;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to sync metadata for card", card.id, e);
+    }
+  }
+
+  if (count > 0) {
+    await notify(`Synced metadata for ${count} card(s) from their parents.`);
+  } else {
+    await notify("No metadata found to sync from parents.", "error");
+  }
+}
+
+/**
+ * Removes sync metadata (defined by NEXT_PUBLIC_MIRO_METADATA_KEY) from selected cards.
+ */
+export async function handleClearMetadata() {
+  const selection = await miro.board.getSelection();
+  const cards = selection.filter(i => i.type === 'card' || i.type === 'app_card') as any[];
+
+  if (cards.length === 0) {
+    await notify("Please select at least one card to clear metadata", "error");
+    return;
+  }
+
+  const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
+  let count = 0;
+
+  for (const card of cards) {
+    try {
+      await card.setMetadata(metadataKey, {});
+      count++;
+    } catch (e) {
+      console.warn("Failed to clear metadata", card.id, e);
+    }
+  }
+
+  if (count > 0) {
+    await notify(`Cleared metadata ("${metadataKey}") for ${count} card(s).`);
+  }
+}
+
 export async function handleCreateRefinementFrame() {
   const selection = await miro.board.getSelection();
   const frames = selection.filter((item) => item.type === 'frame') as Frame[];

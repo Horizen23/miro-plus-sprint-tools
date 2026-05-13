@@ -1,4 +1,5 @@
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { SectionHeader } from "../components/SectionHeader";
 import { SelectionSummary } from "../components/SelectionSummary";
 import { EstimationTools } from "../components/EstimationTools";
@@ -10,7 +11,8 @@ interface SprintToolsProps {
   estimateUnit: 'pt' | 'h';
   setEstimateUnit: (unit: 'pt' | 'h') => void;
   summary: any;
-  handleAction: (fn: () => Promise<any>) => void;
+  handleAction: (name: string, fn: () => Promise<any>) => void;
+  activeAction: string | null;
   handleCreateSticky: (notes: string[], parentFrameId?: string) => Promise<any>;
   handleSetPoints: (p: string) => void;
   isProcessing: boolean;
@@ -19,6 +21,11 @@ interface SprintToolsProps {
   handleDuplicateAndLink: () => Promise<any>;
   handleRemoveLinks: () => Promise<any>;
   handleReorderSelectedCards: () => Promise<any>;
+  handleSyncMetadataFromParent: () => Promise<any>;
+  handleClearMetadata: () => Promise<any>;
+  handleInspectMetadata: () => Promise<any>;
+  inspectedMetadata: { title: string; data: any }[] | null;
+  setInspectedMetadata: (data: { title: string; data: any }[] | null) => void;
   showGuide: boolean;
   setShowGuide: (show: boolean) => void;
   handleSelectAll: () => void;
@@ -38,6 +45,7 @@ export const SprintTools: React.FC<SprintToolsProps> = ({
   setEstimateUnit,
   summary,
   handleAction,
+  activeAction,
   handleCreateSticky,
   handleSetPoints,
   isProcessing,
@@ -46,6 +54,11 @@ export const SprintTools: React.FC<SprintToolsProps> = ({
   handleDuplicateAndLink,
   handleRemoveLinks,
   handleReorderSelectedCards,
+  handleSyncMetadataFromParent,
+  handleClearMetadata,
+  handleInspectMetadata,
+  inspectedMetadata,
+  setInspectedMetadata,
   showGuide,
   setShowGuide,
   handleSelectAll,
@@ -90,10 +103,14 @@ export const SprintTools: React.FC<SprintToolsProps> = ({
           handleSelectInView={handleSelectInView}
           handleStartVoting={handleStartVoting}
           handleAction={handleAction}
+          activeAction={activeAction}
           handleCreateRefinementFrame={handleCreateRefinementFrame}
           handleDuplicateAndLink={handleDuplicateAndLink}
           handleRemoveLinks={handleRemoveLinks}
           handleReorderSelectedCards={handleReorderSelectedCards}
+          handleSyncMetadataFromParent={handleSyncMetadataFromParent}
+          handleClearMetadata={handleClearMetadata}
+          handleInspectMetadata={handleInspectMetadata}
           isProcessing={isProcessing}
           itemCount={summary.count}
           showGuide={showGuide}
@@ -102,6 +119,31 @@ export const SprintTools: React.FC<SprintToolsProps> = ({
           handleResetVoting={handleResetVoting}
         />
       </div>
+
+      {inspectedMetadata && typeof document !== 'undefined' && createPortal(
+        <div className="metadata-inspector-overlay" onClick={() => setInspectedMetadata(null)}>
+          <div className="metadata-inspector-content" onClick={(e) => e.stopPropagation()}>
+          <div className="metadata-inspector-header">
+            <h3>Metadata ({inspectedMetadata.length} items)</h3>
+            <button onClick={() => setInspectedMetadata(null)} className="close-btn">&times;</button>
+          </div>
+          <div className="metadata-inspector-body">
+            {inspectedMetadata.map((item, index) => (
+              <div key={index} className="metadata-item-block" style={{ marginBottom: index < inspectedMetadata.length - 1 ? '16px' : '0' }}>
+                <div style={{ fontSize: '10px', fontWeight: 800, color: '#8c90b0', marginBottom: '4px', textTransform: 'uppercase' }}>
+                  {item.title}
+                </div>
+                <pre>{JSON.stringify(item.data, null, 2)}</pre>
+              </div>
+            ))}
+          </div>
+          <div className="metadata-inspector-footer">
+            <button onClick={() => setInspectedMetadata(null)} className="btn-primary">Close</button>
+          </div>
+        </div>
+        </div>,
+        document.body
+      )}
     </>
   );
 };

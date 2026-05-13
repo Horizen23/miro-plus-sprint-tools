@@ -3,14 +3,13 @@
 import * as React from 'react';
 import { VotingSession } from '@/components/VotingSession';
 import { useVotingSession } from '@/hooks/useVotingSession';
-import { handleSetPointsOnItem } from '@/utils/estimationUtils';
+import { handleSetPointsOnItems } from '@/utils/estimationUtils';
 
 export default function VotingContent() {
   // Real implementation for applying points in the modal
   const handleSetPointsInModal = async (points: string, items?: any[]) => {
-    if (!items || items.length === 0) return;
-    for (const item of items) {
-      await handleSetPointsOnItem(item, points);
+    if (items && items.length > 0) {
+      await handleSetPointsOnItems(items, points);
     }
   };
 

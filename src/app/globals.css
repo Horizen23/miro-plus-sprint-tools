@@ -150,15 +150,36 @@ img {
 .summary-divider { width: 100%; height: 1px; background: #eef0f7; }
 .content { display: flex; flex-direction: column; gap: 8px; }
 .action-area { display: flex; flex-direction: column; gap: 8px; }
-.btn-primary { background: #4262ff; color: white; border: none; padding: 8px 12px; border-radius: 6px; font-weight: 600; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.2s ease; }
+.btn-primary { background: #4262ff; color: white; border: none; padding: 8px 12px; border-radius: 6px; font-weight: 600; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.2s ease; min-height: 32px; }
 .btn-primary:hover:not(:disabled) { background: #3551d9; }
 .btn-primary:disabled { background: #e0e0e0; color: #999; cursor: not-allowed; }
-.btn-secondary { background: transparent; color: #666; border: 1px solid #e0e0e0; padding: 6px 10px; border-radius: 6px; font-weight: 600; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.btn-secondary { background: transparent; color: #666; border: 1px solid #e0e0e0; padding: 6px 10px; border-radius: 6px; font-weight: 600; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; }
 .footer { margin-top: auto; font-size: 10px; color: #999; display: flex; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid #f0f0f0; }
 .status-dot { width: 8px; height: 8px; background: #e0e0e0; border-radius: 50%; transition: background 0.3s; }
 .status-dot.online { background: #00d142; box-shadow: 0 0 8px rgba(0, 209, 66, 0.4); }
 
-.spinner { width: 16px; height: 16px; border: 2px solid rgba(255, 255, 255, 0.3); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; }
+.spinner { 
+  width: 14px; 
+  height: 14px; 
+  border: 2px solid rgba(0, 0, 0, 0.1); 
+  border-top-color: currentColor; 
+  border-radius: 50%; 
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+.btn-primary .spinner {
+  border-color: rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+}
+
+.btn-secondary .spinner {
+  width: 14px;
+  height: 14px;
+  border: 3px solid #f0f1f5;
+  border-top-color: #4262ff;
+  flex-shrink: 0;
+}
 
 .timesheet-section { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
 .section-title { font-size: 13px; font-weight: 700; color: #050038; display: flex; align-items: center; gap: 6px; margin: 0; }
@@ -1492,4 +1513,97 @@ textarea.form-input {
 .voter-tooltip-container:hover .voter-tooltip {
   visibility: visible;
   opacity: 1;
+}
+/* Metadata Inspector Overlay */
+.metadata-inspector-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(5, 0, 56, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.metadata-inspector-content {
+  background: #ffffff;
+  width: 100%;
+  max-width: 400px;
+  max-height: 80vh;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+  animation: modalPop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.metadata-inspector-header {
+  padding: 16px;
+  border-bottom: 1px solid #f0f1f5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.metadata-inspector-header h3 {
+  margin: 0;
+  font-size: 14px;
+  color: #050038;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.metadata-inspector-body {
+  padding: 16px;
+  overflow: auto;
+  background: #f8f9ff;
+  flex: 1;
+}
+
+.metadata-inspector-body pre {
+  margin: 0;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #4262ff;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.metadata-inspector-footer {
+  padding: 12px 16px;
+  border-top: 1px solid #f0f1f5;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: #8c90b0;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  transition: color 0.2s;
+}
+
+.close-btn:hover {
+  color: #ff4d4f;
+}
+
+@keyframes modalPop {
+  from { transform: scale(0.9) translateY(20px); opacity: 0; }
+  to { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
