@@ -1,5 +1,6 @@
 import type { Card, Frame, AppCard } from "@mirohq/websdk-types";
 import { parseCardTitle, formatCardTitle } from './estimationUtils';
+import { notify, copyAndNotify } from './uiUtils';
 
 const MIRO_BOARD_URL = process.env.NEXT_PUBLIC_MIRO_BOARD_URL || "https://miro.com/app/board/";
 
@@ -8,7 +9,7 @@ export async function handleDuplicateAndLink() {
   const cards = selection.filter(item => item.type === "card" || item.type === "app_card") as (Card | AppCard)[];
 
   if (cards.length === 0) {
-    await miro.board.notifications.showError("Please select a card to duplicate.");
+    await notify("Please select a card to duplicate.", "error");
     return;
   }
 
@@ -161,7 +162,7 @@ export async function handleRemoveLinks() {
   const cards = selection.filter(i => i.type === 'card' || i.type === 'app_card');
 
   if (cards.length === 0) {
-    await miro.board.notifications.showError("Please select at least one card to remove links");
+    await notify("Please select at least one card to remove links", "error");
     return;
   }
 
@@ -179,7 +180,7 @@ export async function handleRemoveLinks() {
     }
   }
 
-  await miro.board.notifications.showInfo(`Removed links from ${count} card(s)`);
+  await notify(`Removed links from ${count} card(s)`);
 }
 
 export async function handleCreateRefinementFrame() {
@@ -187,9 +188,7 @@ export async function handleCreateRefinementFrame() {
   const frames = selection.filter((item) => item.type === 'frame') as Frame[];
 
   if (frames.length === 0) {
-    await miro.board.notifications.showError(
-      'Please select at least one Frame to refine.'
-    );
+    await notify('Please select at least one Frame to refine.', 'error');
     return;
   }
 
@@ -199,8 +198,6 @@ export async function handleCreateRefinementFrame() {
     const config = await (miro.board as any).getAppData('globalConfig');
     if (config?.jiraPrefix) jiraPrefix = config.jiraPrefix;
   } catch (e) {}
-
-  console.log(jiraPrefix,"jiraPrefix")
 
   const margin = Number(process.env.NEXT_PUBLIC_MIRO_FRAME_MARGIN || 200);
   const newFrames: Frame[] = [];
@@ -460,7 +457,7 @@ export async function handleReorderSelectedCards() {
   const cards = selection.filter(i => i.type === 'card' || i.type === 'app_card');
   
   if (cards.length === 0) {
-    await miro.board.notifications.showError("Please select at least one card to reorder");
+    await notify("Please select at least one card to reorder", "error");
     return;
   }
 
@@ -509,51 +506,14 @@ export async function handleReorderSelectedCards() {
     currentY += cardHeight + margin;
   }
 
-  const truncated = `Reordered ${sortedCards.length} cards by sequence`.length > 80 
-    ? `Reordered ${sortedCards.length} cards by sequence`.substring(0, 77) + "..." 
-    : `Reordered ${sortedCards.length} cards by sequence`;
-    
-  await miro.board.notifications.showInfo(truncated);
+  await notify(`Reordered ${sortedCards.length} cards by sequence`);
 }
 
 /**
- * Robust copy to clipboard with fallback for restricted environments (like iframes)
+ * Standardized clipboard copy is now handled via copyAndNotify in uiUtils.ts
+ * This local version is deprecated.
  */
 export const copyToClipboard = async (text: string): Promise<boolean> => {
-  // Try Modern API first
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch (err) {
-
-  }
-
-  // Fallback: execCommand('copy') with hidden textarea
-  try {
-    const textArea = document.createElement("textarea");
-    textArea.value = text;
-    
-    // Ensure textarea is not visible but part of the DOM
-    textArea.style.position = "fixed";
-    textArea.style.left = "-9999px";
-    textArea.style.top = "0";
-    textArea.style.opacity = "0";
-    textArea.style.pointerEvents = "none";
-    
-    document.body.appendChild(textArea);
-    textArea.focus();
-    textArea.select();
-    
-    const successful = document.execCommand('copy');
-    document.body.removeChild(textArea);
-    
-    if (successful) return true;
-  } catch (err) {
-
-  }
-
-  return false;
+  return await copyAndNotify(text);
 };
 

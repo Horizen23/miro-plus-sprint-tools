@@ -9,56 +9,17 @@ import { ListItem } from "../components/ListItem";
 import { useJiraAuth } from "../contexts/JiraAuthContext";
 import { useGlobalConfig } from "../contexts/GlobalConfigContext";
 import { parseUserMapping, getCardMappedUser, getCardMappedUsers } from "../utils/mappingUtils";
+import { useJira } from "../hooks/useJira";
+import { notify } from "../utils/uiUtils";
 
-interface SelectedCard {
-  id: string;
-  type: string;
-  title: string;
-  description: string;
-  startDate?: string;
-  dueDate?: string;
-  assigneeId?: string;
-  detectedParentKey?: string;
-  syncedKey?: string;
-  lastSyncedTitle?: string;
-  lastSyncedDesc?: string;
-  x: number;
-  y: number;
-}
-
-const htmlToPlainText = (html?: string) => {
-  if (!html) return "";
-  let text = html;
-  
-  // Replace <br> and block closing tags with \n
-  text = text.replace(/<br\s*\/?>/gi, '\n');
-  text = text.replace(/<\/p>|<\/div>|<\/ul>|<\/ol>/gi, '\n');
-  
-  // Replace list items with dash bullets
-  text = text.replace(/<li[^>]*>/gi, '\n- ');
-  
-  // Replace non-breaking spaces
-  text = text.replace(/&nbsp;/g, ' ');
-  
-  // Strip all remaining HTML tags
-  text = text.replace(/<[^>]*>/g, '');
-  
-  // Clean up empty bullets (e.g., "- " followed by newline or end of string)
-  text = text.replace(/\n-\s*(?=\n|$)/g, '');
-  
-  // Normalize consecutive newlines into a single newline
-  text = text.replace(/\n+/g, '\n');
-  
-  return text.trim();
-};
+import { useJiraDetection } from "../hooks/useJiraDetection";
 
 export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) => {
   const { config, setConfig, isAuthenticating, availableResources, startOAuth, selectResource, logout } = useJiraAuth();
+  const { withRefresh } = useJira();
+  const { config: globalConfig } = useGlobalConfig();
   
   const [showConfig, setShowConfig] = React.useState(!config.accessToken && !config.apiToken);
-  const [selectedCards, setSelectedCards] = React.useState<SelectedCard[]>([]);
-  const [checkedIds, setCheckedIds] = React.useState<Set<string>>(new Set());
-  
   const [appParentKey, setAppParentKey] = React.useState("");
   const [appParentTitle, setAppParentTitle] = React.useState("");
   const [searchQuery, setSearchQuery] = React.useState("");
@@ -66,43 +27,24 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
   const [isSearching, setIsSearching] = React.useState(false);
   const [isProcessing, setIsProcessing] = React.useState(false);
 
+  // --- Detection Hook ---
+  const { 
+    selectedCards, 
+    checkedIds, 
+    setCheckedIds, 
+    detectSelection, 
+    toggleCheck, 
+    handleSelectAll,
+    validItemsCount
+  } = useJiraDetection(selection, appParentKey);
+
   React.useEffect(() => {
-    if (config.accessToken) {
-      setShowConfig(false);
-    }
+    if (config.accessToken) setShowConfig(false);
   }, [config.accessToken]);
 
   React.useEffect(() => {
-    if (availableResources.length > 0) {
-      setShowConfig(true);
-    }
+    if (availableResources.length > 0) setShowConfig(true);
   }, [availableResources]);
-
-  const notify = (msg: string, type: 'info' | 'error' = 'info') => {
-    const truncated = msg.length > 80 ? msg.substring(0, 77) + "..." : msg;
-    if (type === 'info') miro.board.notifications.showInfo(truncated);
-    else miro.board.notifications.showError(truncated);
-  };
-
-  const withRefresh = async <T,>(fn: (service: JiraService) => Promise<T>): Promise<T> => {
-    let service = new JiraService(config);
-    try {
-      return await fn(service);
-    } catch (e: any) {
-      if (e.message?.includes("401") && config.authType === 'oauth' && config.refreshToken) {
-        try {
-          const refreshData = await service.refreshAccessToken();
-          const newConfig = { ...config, accessToken: refreshData.access_token, refreshToken: refreshData.refresh_token || config.refreshToken };
-          const configKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_CONFIG_KEY || "jira-config-v2";
-          setConfig(newConfig);
-          localStorage.setItem(configKey, JSON.stringify(newConfig));
-          const nextService = new JiraService(newConfig);
-          return await fn(nextService);
-        } catch (refreshError) { setShowConfig(true); throw refreshError; }
-      }
-      throw e;
-    }
-  };
 
   // --- Search Logic ---
   React.useEffect(() => {
@@ -112,20 +54,14 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
         try {
           let finalQuery = searchQuery.trim();
           const prefix = globalConfig?.jiraPrefix || "FTDGENERIC";
-          
-          // Only prepend prefix if it's purely numeric (e.g., 2905 -> FTDGENERIC-2905)
-          if (/^\d+$/.test(finalQuery)) {
-            finalQuery = `${prefix}-${finalQuery}`;
-          }
-          
-          // Pass the prefix to s.searchIssues to scope the search to the project
+          if (/^\d+$/.test(finalQuery)) finalQuery = `${prefix}-${finalQuery}`;
           const results = await withRefresh(s => s.searchIssues(finalQuery, prefix));
           setSearchResults(results);
         } catch (e) { } finally { setIsSearching(false); }
       } else { setSearchResults([]); }
     }, 500);
     return () => clearTimeout(timer);
-  }, [searchQuery, config]);
+  }, [searchQuery, config, globalConfig]);
 
   const selectSearchResult = (issue: any) => {
     setAppParentKey(issue.key);
@@ -133,114 +69,6 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
     setSearchQuery("");
     setSearchResults([]);
   };
-
-  const selectionIds = selection.map(item => item.id).join(',');
-
-  // --- Selection Detection Logic ---
-  const detectSelection = async () => {
-    try {
-      const tags = await miro.board.get({ type: 'tag' });
-      
-      const items: SelectedCard[] = [];
-      for (const item of selection) {
-        if (item.type !== 'card' && item.type !== 'app_card') continue;
-        
-        const itemAny = item as any;
-        const itemTags = tags.filter(t => itemAny.tagIds?.includes(t.id));
-        const jiraTag = itemTags.find(t => t.title.toLowerCase().startsWith('jira-'));
-        
-        let detectedParentKey = undefined;
-        if (jiraTag) {
-          const tagValue = jiraTag.title.split('-').slice(1).join('-').toUpperCase();
-          const prefix = globalConfig?.jiraPrefix || "FTDGENERIC";
-          detectedParentKey = tagValue.includes('-') ? tagValue : `${prefix}-${tagValue}`;
-        }
-        
-        // Get Metadata for Smart Sync
-        let syncedInfo: any = null;
-        if (itemAny.getMetadata) {
-          const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
-          syncedInfo = await itemAny.getMetadata(metadataKey);
-        }
-
-        let cleanDesc = itemAny.description || "";
-        cleanDesc = cleanDesc.split('---<br><strong>Jira')[0];
-        cleanDesc = cleanDesc.replace(/(<p[^>]*>|<br\s*\/?>|\s)*$/, '');
-
-        items.push({
-          id: item.id, type: item.type,
-          title: (itemAny.title || "").replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' '),
-          description: htmlToPlainText(cleanDesc),
-          startDate: itemAny.startDate,
-          dueDate: itemAny.dueDate,
-          assigneeId: itemAny.assignee?.userId,
-          detectedParentKey,
-          syncedKey: syncedInfo?.key,
-          lastSyncedTitle: syncedInfo?.lastTitle,
-          lastSyncedDesc: syncedInfo?.lastDesc,
-          x: itemAny.x, y: itemAny.y
-        });
-      }
-      setSelectedCards(items);
-    } catch (e) { console.error("Detection Error:", e); }
-  };
-
-  // --- Auto-Refresh Effect ---
-  React.useEffect(() => {
-    detectSelection();
-  }, [selectionIds]);
-
-  // --- Sync Checkbox Logic ---
-  React.useEffect(() => {
-    setCheckedIds(prev => {
-      const currentIds = new Set(selectedCards.map(c => c.id));
-      const nextChecked = new Set<string>();
-      let changed = false;
-
-      // 1. Keep only IDs that are still in current selection
-      prev.forEach(id => {
-        if (currentIds.has(id)) {
-          nextChecked.add(id);
-        } else {
-          changed = true;
-        }
-      });
-
-      // 2. Auto-check new items that need sync
-      selectedCards.forEach(c => {
-        const isCreateValid = !!(appParentKey || c.detectedParentKey);
-        const isSynced = !!c.syncedKey;
-        const hasChanged = isSynced && (c.title !== c.lastSyncedTitle || c.description !== c.lastSyncedDesc);
-
-        if (((isCreateValid && !isSynced) || hasChanged) && !nextChecked.has(c.id)) {
-          nextChecked.add(c.id);
-          changed = true;
-        }
-      });
-
-      return changed ? nextChecked : prev;
-    });
-  }, [selectedCards, appParentKey]);
-
-  const toggleCheck = (card: SelectedCard) => {
-    const isCreateValid = !!(appParentKey || card.detectedParentKey);
-    const isSynced = !!card.syncedKey;
-    if (!isCreateValid && !isSynced) return;
-
-    const next = new Set(checkedIds);
-    if (next.has(card.id)) next.delete(card.id);
-    else next.add(card.id);
-    setCheckedIds(next);
-  };
-
-  const handleSelectAll = () => {
-    const validIds = selectedCards.filter(c => !!(appParentKey || c.detectedParentKey) || !!c.syncedKey).map(c => c.id);
-    if (checkedIds.size >= validIds.length && validIds.length > 0) setCheckedIds(new Set());
-    else setCheckedIds(new Set(validIds));
-  };
-
-  // --- Global Config (User Mapping) ---
-  const { config: globalConfig } = useGlobalConfig();
 
   // --- Main Sync Action ---
   const syncToJira = async () => {
@@ -258,39 +86,41 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
       const userInfo = await miro.board.getUserInfo();
       const currentMiroUserId = userInfo.id;
 
-      // Parse User Mapping using utility
-      const mapping = parseUserMapping(globalConfig?.tsUserMapping || "");
+      // Batch Fetch all original cards at once
+      const originalCards = await miro.board.get({ id: cardsToSync.map(c => c.id) });
+      const originalCardsMap = new Map(originalCards.map(c => [c.id, c]));
 
-      // Cache for Jira Account IDs to avoid redundant searches
+      const mapping = parseUserMapping(globalConfig?.tsUserMapping || "");
       const jiraAccountCache = new Map<string, string>();
 
-      // Pre-fetch my Jira account ID
       try {
         const myself = await withRefresh(s => s.getMyself());
         if (myself) jiraAccountCache.set((userInfo as any).email?.toLowerCase() || 'me', myself.accountId);
       } catch (e) { console.warn("Could not fetch my Jira profile", e); }
 
       const allBoardTags = await miro.board.get({ type: 'tag' });
+      const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
+      const boardUrl = process.env.NEXT_PUBLIC_MIRO_BOARD_URL || "https://miro.com/app/board/";
+
+      // Pre-calculate ignoreRegex
+      let ignoreRegex = "";
+      const vars = globalConfig?.tsVariables || "";
+      const tagLine = vars.split('\n').find((l: string) => l.trim().startsWith('tag='));
+      if (tagLine) {
+        const parts = tagLine.split('=');
+        if (parts[1]) ignoreRegex = parts[1].trim();
+      }
 
       for (const card of cardsToSync) {
-        const originalItem = await miro.board.getById(card.id) as any;
+        const originalItem = originalCardsMap.get(card.id) as any;
         if (!originalItem) continue;
-        // --- Determine Assignees ---
+
         let targetAssignees: string[] = [];
 
-        // 1. Check User Mapping from tags
         if (mapping.size > 0) {
           const cardTagTitles = allBoardTags
             .filter(t => originalItem.tagIds?.includes(t.id))
             .map(t => t.title);
-
-          let ignoreRegex = "";
-          const vars = globalConfig?.tsVariables || "";
-          const tagLine = vars.split('\n').find((l: string) => l.trim().startsWith('tag='));
-          if (tagLine) {
-            const parts = tagLine.split('=');
-            if (parts[1]) ignoreRegex = parts[1].trim();
-          }
 
           const mappedUsers = getCardMappedUsers(cardTagTitles, mapping, ignoreRegex);
           for (const mu of mappedUsers) {
@@ -309,84 +139,46 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
           }
         }
 
-        // 2. Fallback to Miro assignee if no tags mapped
         if (targetAssignees.length === 0 && card.assigneeId === currentMiroUserId) {
           const myId = jiraAccountCache.get((userInfo as any).email?.toLowerCase() || 'me');
           if (myId) targetAssignees.push(myId);
         }
 
-        // 3. Ensure at least one element (even if undefined) so the loop runs once
-        if (targetAssignees.length === 0) {
-          targetAssignees.push(undefined as any);
-        }
+        if (targetAssignees.length === 0) targetAssignees.push(undefined as any);
 
-      console.log(targetAssignees, "targetAssignees")
         try {
+          const miroDeepLink = `${boardUrl}${boardId}/?moveToWidget=${card.id}`;
+          const jiraDescription = `${card.description}\n\n---\nMiro Card Link: ${miroDeepLink}`;
+
           if (card.syncedKey) {
-            // MODE: UPDATE EXISTING ISSUE(S)
-            try {
-              const syncedKeys = card.syncedKey.split(',').map((k: string) => k.trim()).filter(Boolean);
-              
-              const boardUrl = process.env.NEXT_PUBLIC_MIRO_BOARD_URL || "https://miro.com/app/board/";
-              const miroDeepLink = `${boardUrl}${boardId}/?moveToWidget=${card.id}`;
-              const jiraDescription = `${card.description}\n\n---\nMiro Card Link: ${miroDeepLink}`;
+            const syncedKeys = card.syncedKey.split(',').map((k: string) => k.trim()).filter(Boolean);
+            const updatedKeys = [...syncedKeys];
+            const maxLen = Math.max(targetAssignees.length, syncedKeys.length);
 
-              const updatedKeys = [...syncedKeys];
-              const maxLen = Math.max(targetAssignees.length, syncedKeys.length);
-
-              for (let i = 0; i < maxLen; i++) {
-                const assignee = targetAssignees[i] !== undefined ? targetAssignees[i] : targetAssignees[0];
-                
-                if (i < syncedKeys.length) {
-                  // Update existing
-                  const keyToUpdate = syncedKeys[i];
-                  await withRefresh(s => s.updateIssue(keyToUpdate, card.title, card.dueDate, card.startDate, assignee, jiraDescription));
-                  updateCount++;
-                } else {
-                  // Create new missing subtask for the extra assignee
-                  const finalParentKey = appParentKey || card.detectedParentKey;
-                  if (finalParentKey) {
-                    const newIssue = await withRefresh(s => s.createSubtask(finalParentKey, card.title, jiraDescription, card.dueDate, card.startDate, assignee));
-                    updatedKeys.push(newIssue.key);
-                    createCount++;
-                  }
+            for (let i = 0; i < maxLen; i++) {
+              const assignee = targetAssignees[i] !== undefined ? targetAssignees[i] : targetAssignees[0];
+              if (i < syncedKeys.length) {
+                await withRefresh(s => s.updateIssue(syncedKeys[i], card.title, card.dueDate, card.startDate, assignee, jiraDescription));
+                updateCount++;
+              } else {
+                const finalParentKey = appParentKey || card.detectedParentKey;
+                if (finalParentKey) {
+                  const newIssue = await withRefresh(s => s.createSubtask(finalParentKey, card.title, jiraDescription, card.dueDate, card.startDate, assignee));
+                  updatedKeys.push(newIssue.key);
+                  createCount++;
                 }
               }
-              
-              // Stamp metadata and card
-              const now = new Date().toLocaleString();
-              
-              // Try to remove old stamp safely
-              let cleanDesc = originalItem.description || "";
-              cleanDesc = cleanDesc.split('---<br><strong>Jira')[0];
-              cleanDesc = cleanDesc.replace(/(<p[^>]*>|<br\s*\/?>|\s)*$/, '');
-
-              const joinedKeys = updatedKeys.join(',');
-              const stamp = `<p data-jira-stamp="true">---<br><strong>Jira Update:</strong> ${joinedKeys}<br><strong>Updated at:</strong> ${now}</p>`;
-              originalItem.description = cleanDesc + stamp;
-              
-              const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
-              await originalItem.setMetadata(metadataKey, { key: joinedKeys, lastTitle: card.title, lastDesc: card.description });
-              await originalItem.sync();
-            } catch (updateErr: any) {
-              if (updateErr.message?.includes("404")) {
-                notify(`Issue ${card.syncedKey} not found in Jira. Clearing metadata for re-sync.`, "error");
-                const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
-                await originalItem.setMetadata(metadataKey, null);
-                originalItem.linkedTo = undefined;
-                await originalItem.sync();
-              } else {
-                throw updateErr;
-              }
             }
-          } else if (!card.syncedKey) {
-            // MODE: CREATE NEW SUBTASK(S)
+            
+            const now = new Date().toLocaleString();
+            let cleanDesc = (originalItem.description || "").split('---<br><strong>Jira')[0].replace(/(<p[^>]*>|<br\s*\/?>|\s)*$/, '');
+            const joinedKeys = updatedKeys.join(',');
+            originalItem.description = cleanDesc + `<p data-jira-stamp="true">---<br><strong>Jira Update:</strong> ${joinedKeys}<br><strong>Updated at:</strong> ${now}</p>`;
+            await originalItem.setMetadata(metadataKey, { key: joinedKeys, lastTitle: card.title, lastDesc: card.description });
+            await originalItem.sync();
+          } else {
             const finalParentKey = appParentKey || card.detectedParentKey;
             if (!finalParentKey) continue;
-
-            const boardUrl = process.env.NEXT_PUBLIC_MIRO_BOARD_URL || "https://miro.com/app/board/";
-            const miroDeepLink = `${boardUrl}${boardId}/?moveToWidget=${card.id}`;
-            const jiraDescription = `${card.description}\n\n---\nMiro Card Link: ${miroDeepLink}`;
 
             const createdKeys: string[] = [];
             const jiraLinks: string[] = [];
@@ -400,29 +192,23 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
             }
 
             const now = new Date().toLocaleString();
-            
-            // Try to remove old stamp safely
-            let cleanDesc = originalItem.description || "";
-            cleanDesc = cleanDesc.split('---<br><strong>Jira')[0];
-            cleanDesc = cleanDesc.replace(/(<p[^>]*>|<br\s*\/?>|\s)*$/, '');
-
-            const stamp = `<p data-jira-stamp="true">---<br><strong>Jira Issue:</strong> ${jiraLinks.join(', ')}<br><strong>Synced at:</strong> ${now}</p>`;
-            
-            originalItem.description = cleanDesc + stamp;
-            const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
+            let cleanDesc = (originalItem.description || "").split('---<br><strong>Jira')[0].replace(/(<p[^>]*>|<br\s*\/?>|\s)*$/, '');
+            originalItem.description = cleanDesc + `<p data-jira-stamp="true">---<br><strong>Jira Issue:</strong> ${jiraLinks.join(', ')}<br><strong>Synced at:</strong> ${now}</p>`;
             await originalItem.setMetadata(metadataKey, { key: createdKeys.join(','), lastTitle: card.title, lastDesc: card.description });
             await originalItem.sync();
           }
         } catch (e: any) { 
-          console.error(e); 
-          notify(`Failed to sync: ${e.message}`, "error");
+          if (e.message?.includes("404")) {
+            notify(`Issue ${card.syncedKey} not found in Jira. Clearing metadata.`, "error");
+            await originalItem.setMetadata(metadataKey, null);
+            await originalItem.sync();
+          } else {
+            throw e;
+          }
         }
       }
 
-      if (createCount > 0 || updateCount > 0) {
-        notify(`Success! Created ${createCount}, Updated ${updateCount} items.`);
-      }
-      
+      if (createCount > 0 || updateCount > 0) notify(`Success! Created ${createCount}, Updated ${updateCount} items.`);
       await detectSelection();
       setAppParentKey("");
       setCheckedIds(new Set());
@@ -431,7 +217,7 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
   };
 
 
-  const validItemsCount = selectedCards.filter(c => (appParentKey || c.detectedParentKey) || (c.syncedKey && c.title !== c.lastSyncedTitle)).length;
+
 
   return (
     <div className="jira-container">
@@ -602,8 +388,8 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                         title={c.title}
                         checked={isChecked}
                         showCheckbox
-                        onCheck={() => isValid && toggleCheck(c)}
-                        onClick={() => isValid && toggleCheck(c)}
+                        onCheck={() => isValid && toggleCheck(c.id)}
+                        onClick={() => isValid && toggleCheck(c.id)}
                         className={!isValid && !isSynced ? 'error-state' : ''}
                         style={{ opacity: isChecked ? 1 : 0.6 }}
                         rightElement={rightElement}

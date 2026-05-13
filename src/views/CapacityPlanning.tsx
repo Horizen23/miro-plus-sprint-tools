@@ -49,6 +49,30 @@ export const CapacityPlanning: React.FC = () => {
     return sprintDates.filter(d => d.getDay() !== 0 && d.getDay() !== 6).length;
   }, [sprintDates]);
 
+  // Memoize Member Stats
+  const memberStats = React.useMemo(() => {
+    return teamMembers.map(m => {
+      let memberTotalHours = 0;
+      sprintDates.forEach((date, i) => {
+        const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+        if (!isWeekend) {
+          const val = m.attendance[i] !== undefined ? m.attendance[i] : 1;
+          memberTotalHours += (val * capConfig.workHoursPerDay);
+        }
+      });
+      const net = memberTotalHours - capConfig.ceremonyHours;
+      return {
+        ...m,
+        netMemberHours: net > 0 ? net : 0
+      };
+    });
+  }, [teamMembers, sprintDates, capConfig.workHoursPerDay, capConfig.ceremonyHours]);
+
+  // Memoize Grand Total
+  const totalNet = React.useMemo(() => {
+    return memberStats.reduce((sum, m) => sum + m.netMemberHours, 0);
+  }, [memberStats]);
+
   return (
     <div className="planning-container">
       <section className="capacity-section">
@@ -123,8 +147,8 @@ export const CapacityPlanning: React.FC = () => {
                       className={`col-toggle-btn ${(() => {
                         const today = new Date();
                         return date && date.getDate() === today.getDate() && 
-                               date.getMonth() === today.getMonth() && 
-                               date.getFullYear() === today.getFullYear() ? 'today' : '';
+                                date.getMonth() === today.getMonth() && 
+                                date.getFullYear() === today.getFullYear() ? 'today' : '';
                       })()}`}
                       title={`${date ? date.toLocaleDateString() : ''}`}
                       onClick={() => {
@@ -146,91 +170,60 @@ export const CapacityPlanning: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {teamMembers.map(m => {
-                const getAttendanceVal = (dayIdx: number) => {
-                  const date = sprintDates[dayIdx];
-                  if (date && (date.getDay() === 0 || date.getDay() === 6)) return 0;
-                  return (m.attendance[dayIdx] !== undefined ? m.attendance[dayIdx] : 1);
-                };
-                
-                let memberTotalHours = 0;
-                for(let i=0; i < sprintDays; i++) {
-                  memberTotalHours += (getAttendanceVal(i) * capConfig.workHoursPerDay);
-                }
-                const netMemberHours = memberTotalHours - capConfig.ceremonyHours;
-                
-                return (
-                  <tr key={m.id}>
-                    <td className="sticky-col">
-                      <div className="name-cell">
-                        <button className="btn-del-small" onClick={() => setTeamMembers(teamMembers.filter(tm => tm.id !== m.id))}>×</button>
-                        <input 
-                          type="text" className="member-name-input" 
-                          value={m.name} 
-                          onChange={e => setTeamMembers(teamMembers.map(tm => tm.id === m.id ? {...tm, name: e.target.value} : tm))}
-                        />
-                      </div>
-                    </td>
-                    {Array.from({length: sprintDays}).map((_, dayIdx) => {
-                      const date = sprintDates[dayIdx];
-                      const isWeekend = date && (date.getDay() === 0 || date.getDay() === 6);
-                      const val = isWeekend ? 0 : getAttendanceVal(dayIdx);
-                      
-                      return (
-                        <td key={dayIdx} className={isWeekend ? 'td-weekend' : ''}>
-                          <button 
-                            className={`att-btn ${isWeekend ? 'weekend-off' : (val === 1 ? 'full' : val === 0.5 ? 'half' : 'leave')}`}
-                            disabled={!!isWeekend}
-                            onClick={() => {
-                              if (isWeekend) return;
-                              const nextVal = val === 1 ? 0.5 : val === 0.5 ? 0 : 1;
-                              const newAtt = [...m.attendance];
-                              while(newAtt.length <= dayIdx) newAtt.push(1);
-                              newAtt[dayIdx] = nextVal;
-                              setTeamMembers(teamMembers.map(tm => tm.id === m.id ? {...tm, attendance: newAtt} : tm));
-                            }}
-                          >
-                            {isWeekend ? '-' : (val === 1 ? '•' : val === 0.5 ? '½' : '×')}
-                          </button>
-                        </td>
-                      );
-                    })}
-                    <td className="total-cell">{netMemberHours > 0 ? netMemberHours : 0}h</td>
-                  </tr>
-                );
-              })}
+              {memberStats.map(m => (
+                <tr key={m.id}>
+                  <td className="sticky-col">
+                    <div className="name-cell">
+                      <button className="btn-del-small" onClick={() => setTeamMembers(teamMembers.filter(tm => tm.id !== m.id))}>×</button>
+                      <input 
+                        type="text" className="member-name-input" 
+                        value={m.name} 
+                        onChange={e => setTeamMembers(teamMembers.map(tm => tm.id === m.id ? {...tm, name: e.target.value} : tm))}
+                      />
+                    </div>
+                  </td>
+                  {sprintDates.map((date, dayIdx) => {
+                    const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+                    const val = isWeekend ? 0 : (m.attendance[dayIdx] !== undefined ? m.attendance[dayIdx] : 1);
+                    
+                    return (
+                      <td key={dayIdx} className={isWeekend ? 'td-weekend' : ''}>
+                        <button 
+                          className={`att-btn ${isWeekend ? 'weekend-off' : (val === 1 ? 'full' : val === 0.5 ? 'half' : 'leave')}`}
+                          disabled={!!isWeekend}
+                          onClick={() => {
+                            if (isWeekend) return;
+                            const nextVal = val === 1 ? 0.5 : val === 0.5 ? 0 : 1;
+                            const newAtt = [...m.attendance];
+                            while(newAtt.length <= dayIdx) newAtt.push(1);
+                            newAtt[dayIdx] = nextVal;
+                            setTeamMembers(teamMembers.map(tm => tm.id === m.id ? {...tm, attendance: newAtt} : tm));
+                          }}
+                        >
+                          {isWeekend ? '-' : (val === 1 ? '•' : val === 0.5 ? '½' : '×')}
+                        </button>
+                      </td>
+                    );
+                  })}
+                  <td className="total-cell">{m.netMemberHours}h</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       </section>
 
       <SummaryCard className="capacity-result">
-         {(() => {
-            const totalNet = teamMembers.reduce((sum, m) => {
-               let mWorked = 0;
-               for(let i=0; i < sprintDays; i++) {
-                 const date = sprintDates[i];
-                 const isWeekend = date && (date.getDay() === 0 || date.getDay() === 6);
-                 const val = isWeekend ? 0 : (m.attendance[i] !== undefined ? m.attendance[i] : 1);
-                 mWorked += (val * capConfig.workHoursPerDay);
-               }
-               const net = mWorked - capConfig.ceremonyHours;
-               return sum + (net > 0 ? net : 0);
-            }, 0);
-
-            return (
-              <SummaryRow>
-                <div className="grid-item main">
-                  <span className="label">Net Capacity</span>
-                  <span className="value-large">{totalNet}h</span>
-                </div>
-                <div className="grid-item main">
-                  <span className="label">Suggested</span>
-                  <span className="value-large" style={{color: '#52c41a'}}>{getBucketedPoint(mapHoursToPoints(totalNet))}P</span>
-                </div>
-              </SummaryRow>
-            );
-         })()}
+        <SummaryRow>
+          <div className="grid-item main">
+            <span className="label">Net Capacity</span>
+            <span className="value-large">{totalNet}h</span>
+          </div>
+          <div className="grid-item main">
+            <span className="label">Suggested</span>
+            <span className="value-large" style={{color: '#52c41a'}}>{getBucketedPoint(mapHoursToPoints(totalNet))}P</span>
+          </div>
+        </SummaryRow>
       </SummaryCard>
       
       <p className="hint" style={{textAlign: 'center', marginTop: '8px'}}>

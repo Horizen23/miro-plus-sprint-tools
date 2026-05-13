@@ -13,188 +13,36 @@ import { useGlobalConfig } from '@/contexts/GlobalConfigContext';
 // 1. UTILITY FUNCTIONS
 // ==========================================
 
+import { notify } from '@/utils/uiUtils';
+
 const getFullPath = (path: string) => {
   const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || "";
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   return `${BASE_PATH}${cleanPath}`;
 };
 
-const notify = async (msg: string, type: 'info' | 'error' = 'info') => {
-  const truncated = msg.length > 80 ? msg.substring(0, 77) + "..." : msg;
-  if (type === 'error') await miro.board.notifications.showError(truncated);
-  else await miro.board.notifications.showInfo(truncated);
-};
-
 // ==========================================
 // 2. JIRA SYNC BUSINESS LOGIC
 // ==========================================
 
-const updateCardStatus = async (
-  card: Card | AppCard, 
-  status: 'to-do' | 'in-progress' | 'done', 
-  jiraWithRefresh: (<T>(fn: (s: JiraService) => Promise<T>) => Promise<T>) | null, 
-  userInfo: any, 
-  myAccountId?: string, 
-  mapping?: Map<string, string>, 
-  ignoreRegex?: string, 
-  boardTags?: any[]
-) => {
-  const now = new Date();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const currentMiroUserId = userInfo?.id;
+import { syncCardStatus } from '@/utils/jiraSyncUtils';
 
-  let mappedUserIdentity: string | undefined;
-  let isMe = false;
-  let mappedUsers: string[] = [];
+// ==========================================
+// 2. JIRA SYNC HANDLERS
+// ==========================================
 
-  try {
-    const tags = boardTags || await miro.board.get({ type: 'tag' });
-    const cardTags = tags.filter(t => (card as any).tagIds?.includes(t.id)).map(t => t.title);
-    const userMap = mapping || new Map<string, string>();
-    mappedUserIdentity = getCardMappedUser(cardTags, userMap, ignoreRegex);
-    mappedUsers = getCardMappedUsers(cardTags, userMap, ignoreRegex);
-    isMe = isUserOwnerOfCard(cardTags, userMap, userInfo, ignoreRegex);
-  } catch (e) {
-    console.error(`[updateCardStatus] Tag/Mapping Error:`, e);
-  }
+import { executeWithRefresh } from '@/hooks/useJira';
 
-  // Miro Card Validation & Date Stamping
-  if (card.type === 'card') {
-    const c = card as Card;
-    if (status === 'in-progress') {
-      const hasFormalAssignee = !!c.assignee?.userId;
-      const hasMapping = !!mappedUserIdentity;
-      if (!hasFormalAssignee && !hasMapping) {
-        await notify(`Cannot move to In Progress: No Assignee or Tag Mapping found!`, 'error');
-        return false;
-      }
-      if (!c.startDate) c.startDate = today;
-    } else if (status === 'done') {
-      if (!c.startDate) c.startDate = today;
-      if (!c.dueDate) c.dueDate = today;
-    } else if (status === 'to-do') {
-      c.startDate = undefined;
-      c.dueDate = undefined;
-    }
-    c.taskStatus = status; // Visual Movement
-  }
-  
-  let jiraUpdated = false;
-  if (jiraWithRefresh) {
-    const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
-    const metadata = (await card.getMetadata(metadataKey)) as { key?: string; lastTitle?: string } | undefined;
-
-    if (metadata && metadata.key) {
-       try {
-          const syncedKeys = metadata.key.split(',').map((k: string) => k.trim()).filter(Boolean);
-          
-          let targetAssignees: string[] = [];
-          const miroAssigneeId = card.type === 'card' ? (card as Card).assignee?.userId : null;
-
-          for (const mu of mappedUsers) {
-            const USER_CACHE_KEY = `jira_cache_user_${mu}`;
-            let cachedUserId = cacheUtils.get<string>(USER_CACHE_KEY);
-            if (cachedUserId) {
-              targetAssignees.push(cachedUserId);
-            } else {
-              const foundUsers: any[] = await jiraWithRefresh(s => s.findUsers(mu)) || [];
-              if (foundUsers && foundUsers.length > 0) {
-                targetAssignees.push(foundUsers[0].accountId);
-                cacheUtils.set(USER_CACHE_KEY, foundUsers[0].accountId, 3600);
-              }
-            }
-          }
-
-          if (targetAssignees.length === 0) {
-            if (isMe || miroAssigneeId === currentMiroUserId) {
-               targetAssignees.push(myAccountId!);
-            } else {
-               targetAssignees.push(undefined as any);
-            }
-          }
-
-          const jiraFields: any = { summary: (card.title || "").replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ') };
-          if (card.type === 'card') {
-            const c = card as Card;
-            if (c.dueDate) jiraFields.duedate = c.dueDate.split('T')[0];
-            if (c.startDate) {
-              const fieldId = process.env.NEXT_PUBLIC_JIRA_START_DATE_FIELD || "customfield_10015";
-              jiraFields[fieldId] = c.startDate.split('T')[0];
-            }
-          }
-          const cardData = card.type === 'card' ? (card as Card) : null;
-
-          let targetRegex = /none/;
-          if (status === 'in-progress') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_IN_PROGRESS || "progress|doing|dev", "i");
-          else if (status === 'done') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_DONE || "done|complete|resolved", "i");
-          else if (status === 'to-do') targetRegex = new RegExp(process.env.NEXT_PUBLIC_JIRA_STATUS_TODO || "to[\\s\\-]*do|backlog|open|new|ready|todo", "i");
-
-          for (let i = 0; i < syncedKeys.length; i++) {
-            const currentKey = syncedKeys[i];
-            const currentAssignee = targetAssignees[i] !== undefined ? targetAssignees[i] : targetAssignees[0];
-
-            await jiraWithRefresh(s => s.updateIssue(currentKey, jiraFields.summary, cardData?.dueDate, cardData?.startDate, currentAssignee));
-            jiraUpdated = true;
-
-            const transitions = await jiraWithRefresh(s => s.getTransitions(currentKey));
-            const transition = transitions.find((t: any) => targetRegex.test(t.name));
-
-            if (transition) {
-              await jiraWithRefresh(s => s.transitionIssue(currentKey, (transition as any).id));
-              await notify(`Jira: ${currentKey} -> ${(transition as any).name}`);
-            } else {
-              await notify(`Jira: ${currentKey} dates synced, no '${status}' transition`, 'info');
-            }
-          }
-       } catch (err: any) {
-          console.error(`[JiraSync] [${metadata.key}] Sync Error:`, err.message);
-          if (!err.message?.includes("401")) {
-            await notify(`Jira Sync Failed: ${err.message}`, 'error');
-          }
-       }
-    }
-  }
-
-  try {
-    await card.sync();
-    return true;
-  } catch (syncErr: any) {
-    if (syncErr.message?.includes('Cannot move')) {
-       await notify(jiraUpdated ? `Jira synced, but Miro card must be dragged manually.` : `API limit: Kanban cards must be dragged manually!`, 'error');
-    }
-    return false;
-  }
-};
+// ==========================================
+// 2. JIRA SYNC HANDLERS
+// ==========================================
 
 const createStatusHandler = (status: 'to-do' | 'in-progress' | 'done', boardId: string | null, fallbackConfig: any) => async (props: { items: any[] }) => {
   let userInfo: any = null;
   try { userInfo = await miro.board.getUserInfo(); } catch(e) {}
 
   const configKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_CONFIG_KEY || "jira-config-v2";
-  const savedConfig = localStorage.getItem(configKey);
-  const hasJiraConfig = !!savedConfig;
-  let jiraConfig = hasJiraConfig ? JSON.parse(savedConfig!) : null;
-  let refreshPromise: Promise<any> | null = null;
-
-  const withRefresh = hasJiraConfig ? async <T,>(fn: (service: JiraService) => Promise<T>): Promise<T> => {
-    let service = new JiraService(jiraConfig);
-    try { return await fn(service); } catch (e: any) {
-      const is401 = e.message?.includes("401") || e.status === 401;
-      if (is401 && jiraConfig.refreshToken) {
-        if (!refreshPromise) {
-          refreshPromise = (async () => {
-            const refreshData = await service.refreshAccessToken();
-            jiraConfig = { ...jiraConfig, accessToken: refreshData.access_token, refreshToken: refreshData.refresh_token || jiraConfig.refreshToken };
-            localStorage.setItem(configKey, JSON.stringify(jiraConfig));
-            return jiraConfig;
-          })();
-        }
-        const updatedConfig = await refreshPromise;
-        return await fn(new JiraService(updatedConfig));
-      }
-      throw e;
-    }
-  } : null;
+  const hasJiraConfig = !!localStorage.getItem(configKey);
 
   const freshConfig = await (miro.board as any).getAppData("globalConfig");
   const activeConfig = freshConfig || fallbackConfig;
@@ -204,30 +52,43 @@ const createStatusHandler = (status: 'to-do' | 'in-progress' | 'done', boardId: 
 
   try {
     const TAGS_CACHE_KEY = `miro_cache_tags_${boardId}`;
-    const cachedTags = cacheUtils.get<any[]>(TAGS_CACHE_KEY);
-    
-    if (cachedTags) {
-      allBoardTags = cachedTags;
-    } else {
-      allBoardTags = await miro.board.get({ type: 'tag' }).catch(() => []);
-      cacheUtils.set(TAGS_CACHE_KEY, allBoardTags, 600); // Cache for 10 minutes
+    let cachedTags = cacheUtils.get<any[]>(TAGS_CACHE_KEY);
+    if (!cachedTags) {
+      cachedTags = await miro.board.get({ type: 'tag' }).catch(() => []);
+      cacheUtils.set(TAGS_CACHE_KEY, cachedTags, 600);
     }
+    allBoardTags = cachedTags!;
     globalMapping = parseUserMapping(activeConfig?.tsUserMapping || "");
     const vars = activeConfig?.tsVariables || "";
     const tagLine = vars.split('\n').find((l: string) => l.trim().startsWith('tag='));
     if (tagLine) ignoreRegex = tagLine.split('=')[1]?.trim() || "";
-
-    var myAccountId: string | undefined;
-    if (withRefresh) {
-      const myself = await withRefresh(s => s.getMyself()).catch(() => null);
-      myAccountId = myself?.accountId;
-    }
   } catch(e) {}
 
+  let myAccountId: string | undefined;
+  if (hasJiraConfig) {
+    try {
+      const myself = await executeWithRefresh(s => s.getMyself());
+      myAccountId = myself?.accountId;
+    } catch (e) {}
+  }
+
   const cards = props.items.filter(i => i.type === 'card' || i.type === 'app_card') as (Card | AppCard)[];
-  await Promise.all(cards.map(item => 
-    updateCardStatus(item, status, withRefresh, userInfo, myAccountId, globalMapping, ignoreRegex, allBoardTags)
-  ));
+  
+  for (const item of cards) {
+    const result = await syncCardStatus(item, status, hasJiraConfig ? executeWithRefresh : null, {
+      userInfo,
+      myAccountId,
+      mapping: globalMapping,
+      ignoreRegex,
+      boardTags: allBoardTags
+    });
+
+    if (!result.success && result.message) {
+      await notify(result.message, 'error');
+    } else if (result.jiraUpdated) {
+      await notify(`Jira: Status updated to ${status}`);
+    }
+  }
 };
 
 

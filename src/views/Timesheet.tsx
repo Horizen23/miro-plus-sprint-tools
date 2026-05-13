@@ -6,10 +6,10 @@ import { SummaryCard, SummaryDivider } from "../components/SummaryCard";
 import { Button } from "../components/Button";
 import { InputField } from "../components/InputField";
 import { ListItem } from "../components/ListItem";
-import { copyToClipboard } from "../utils/miroUtils";
 import { useGlobalConfig, GlobalConfig as TimesheetConfig } from "../contexts/GlobalConfigContext";
 import { parseUserMapping, isUserOwnerOfCard, getCardMappedUser } from "../utils/mappingUtils";
 import { cacheUtils } from "../utils/cacheUtils";
+import { notify, copyAndNotify } from "../utils/uiUtils";
 
 interface TimesheetProps {
   items: (Card | AppCard)[];
@@ -97,142 +97,129 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
     const grouped: Record<string, { title: string, cardId: string }[]> = {};
     const tagMap = new Map(tags.map(t => [t.id, t.title]));
 
-    // Parse User Mapping using utility
+    // 1. Pre-process User Mapping & Tag Regex
     const mapping = parseUserMapping(currentConfig.tsUserMapping);
-
-    // Extract 'tag' regex from variables for consistent ignoring
-    let tagRegex = ""; // Default: No ignore
-    const tagVarLine = currentConfig.tsVariables.split('\n').find(l => l.trim().startsWith('tag='));
+    let tagRegex = "";
+    const varLines = currentConfig.tsVariables.split('\n');
+    const tagVarLine = varLines.find(l => l.trim().startsWith('tag='));
     if (tagVarLine) {
       const parts = tagVarLine.split('=');
       if (parts[1]) tagRegex = parts[1].trim();
     }
 
+    // 2. Pre-process Variable Extractors (Regexes)
+    const variableExtractors = varLines
+      .map(line => {
+        const splitIdx = line.indexOf('=');
+        if (splitIdx === -1) return null;
+        const name = line.substring(0, splitIdx).trim();
+        const regexStr = line.substring(splitIdx + 1).trim();
+        try {
+          return { name, re: new RegExp(regexStr, 'i') };
+        } catch (e) {
+          return null;
+        }
+      })
+      .filter((v): v is { name: string, re: RegExp } => !!v && v.name !== 'tag');
+
+    // 3. Pre-process Filters
+    let excludeRe: RegExp | null = null;
+    if (currentExcludeTitle) {
+      try { excludeRe = new RegExp(currentExcludeTitle, "i"); } catch (e) {}
+    }
+    let filterRe: RegExp | null = null;
+    if (currentFilterTag) {
+      try { filterRe = new RegExp(currentFilterTag, "i"); } catch (e) {}
+    }
+    
+    let meetingRe: RegExp | null = null;
+    try { meetingRe = new RegExp(currentConfig.tsMeetingTag, "i"); } catch (e) {}
+
     for (const card of cards) {
       if (card.type !== "card" && card.type !== "app_card") continue;
       
-      let c = card as any;
-      
-      // Fallback: use dueDate as startDate if startDate is not set
+      const c = card as any;
       if (!c.startDate && !c.dueDate) continue;
+
+      // 4. Filter by Exclude Title
+      if (excludeRe && excludeRe.test(c.title || "")) continue;
+      if (!excludeRe && currentExcludeTitle && (c.title || "").toLowerCase().includes(currentExcludeTitle.toLowerCase())) continue;
 
       const cardTags = (c.tagIds || [])
         .map((tagId: string) => tagMap.get(tagId))
         .filter(Boolean) as string[];
 
-      // 0. Filter by Exclude Title
-      if (currentExcludeTitle) {
-        try {
-          const excludeRe = new RegExp(currentExcludeTitle, "i");
-          if (excludeRe.test(c.title || "")) continue;
-        } catch (e) {
-          if ((c.title || "").toLowerCase().includes(currentExcludeTitle.toLowerCase())) continue;
-        }
-      }
+      // 5. Filter by Tag
+      if (filterRe && !cardTags.some(t => filterRe!.test(t))) continue;
+      if (!filterRe && currentFilterTag && !cardTags.some(t => t.toLowerCase().includes(currentFilterTag.toLowerCase()))) continue;
 
-      // 1. Filter by Tag
-      if (currentFilterTag) {
-        try {
-          const filterRe = new RegExp(currentFilterTag, "i");
-          if (!cardTags.some(t => filterRe.test(t))) continue;
-        } catch (e) {
-          if (!cardTags.some(t => t.toLowerCase().includes(currentFilterTag.toLowerCase()))) continue;
-        }
-      }
-
-      // 1.5 Unassigned Tasks Filter
       const mappedUser = getCardMappedUser(cardTags, mapping, tagRegex);
       const isUnassigned = !c.assignee?.userId && !mappedUser;
-      if (isUnassigned && !includeUnassigned) {
-        continue;
-      }
+      if (isUnassigned && !includeUnassigned) continue;
 
-      // 2. Filter by Me (Only My Tasks)
       if (onlyMe && userInfo) {
         const isMiroAssignee = c.assignee?.userId === userInfo.id;
         const isMappedOwner = isUserOwnerOfCard(cardTags, mapping, userInfo, tagRegex);
-        
-        const isMe = isMiroAssignee || isMappedOwner;
-
-        if (!isMe && !isUnassigned) {
-          continue;
-        }
+        if (!isMiroAssignee && !isMappedOwner && !isUnassigned) continue;
       }
 
-      const effectiveStart = c.startDate || c.dueDate;
-      const effectiveEnd = c.dueDate || c.startDate;
-      const start = new Date(effectiveStart);
-      const end = new Date(effectiveEnd);
+      // 6. Pre-calculate Variables for this card (once per card)
+      const baseVars: Record<string, string> = { 
+        project: currentConfig.tsDefaultProject,
+        key: ""
+      };
       
-      // Parse Title once per card
-      let rawTitle = c.title || "Untitled Card";
-      let { cleanTitle: title, estimate } = parseCardTitle(rawTitle);
-      title = title.replace(/^(\s*\[[^\]]*\])+\s*/, '').trim();
+      // Extract dynamic vars from tags
+      variableExtractors.forEach(ext => {
+        for (const t of cardTags) {
+          const m = t.match(ext.re);
+          if (m) {
+            baseVars[ext.name] = m[1] || m[0];
+            break;
+          }
+        }
+      });
 
-      // Zero out time for comparison
+      // Special handling for 'tag' (used for Jira key)
+      let cardTagValue = "";
+      if (tagRegex) {
+        try {
+          const tagRe = new RegExp(tagRegex, 'i');
+          for (const t of cardTags) {
+            const m = t.match(tagRe);
+            if (m) { cardTagValue = m[1] || m[0]; break; }
+          }
+        } catch(e) {}
+      }
+      if (cardTagValue && currentConfig.jiraPrefix) {
+        baseVars.key = `${currentConfig.jiraPrefix}-${cardTagValue}`;
+        baseVars.tag = cardTagValue;
+      }
+
+      const { cleanTitle: title, estimate } = parseCardTitle(c.title || "Untitled Card");
+      const cleanDisplayTitle = title.replace(/^(\s*\[[^\]]*\])+\s*/, '').trim();
+      baseVars.title = cleanDisplayTitle;
+      baseVars.estimate = estimate;
+
+      const start = new Date(c.startDate || c.dueDate);
+      const end = new Date(c.dueDate || c.startDate);
       const current = new Date(start.getFullYear(), start.getMonth(), start.getDate());
       const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
 
+      const isMeeting = meetingRe 
+        ? cardTags.some(t => meetingRe!.test(t))
+        : cardTags.some(t => t.toLowerCase().includes(currentConfig.tsMeetingTag.toLowerCase()));
+
+      let pattern = isMeeting ? currentConfig.tsMeetingPattern : currentConfig.tsTaskPattern;
+      let finalTitle = `${currentConfig.tsProject}${pattern}`;
+      Object.entries(baseVars).forEach(([name, val]) => {
+        finalTitle = finalTitle.replace(new RegExp(`{${name}}`, 'g'), val || "");
+      });
+
+      // 7. Loop through dates
       while (current <= last) {
         const dateStr = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(current.getDate()).padStart(2, '0')}`;
         if (!grouped[dateStr]) grouped[dateStr] = [];
-        
-        // Extract Variables
-        const vars: Record<string, string> = { 
-          title, 
-          estimate, 
-          project: currentConfig.tsDefaultProject,
-          key: "" // Will be populated below
-        };
-        const varLines = currentConfig.tsVariables.split('\n');
-
-        varLines.forEach(line => {
-          const splitIdx = line.indexOf('=');
-          if (splitIdx !== -1) {
-            const name = line.substring(0, splitIdx).trim();
-            if (name && vars[name] === undefined) vars[name] = "";
-          }
-        });
-
-        varLines.forEach(line => {
-          const splitIdx = line.indexOf('=');
-          if (splitIdx === -1) return;
-          const name = line.substring(0, splitIdx).trim();
-          const regexStr = line.substring(splitIdx + 1).trim();
-          if (name && regexStr) {
-            try {
-              const re = new RegExp(regexStr, 'i');
-              for (const t of cardTags) {
-                const m = t.match(re);
-                if (m) {
-                  vars[name] = m[1] || m[0];
-                  break;
-                }
-              }
-            } catch (e) {}
-          }
-        });
-
-        // 🎯 Auto-generate Jira Key: jiraPrefix + tag
-        if (vars.tag && currentConfig.jiraPrefix) {
-          vars.key = `${currentConfig.jiraPrefix}-${vars.tag}`;
-        }
-
-        let isMeeting = false;
-        try {
-          const meetingRe = new RegExp(currentConfig.tsMeetingTag, "i");
-          isMeeting = cardTags.some(t => meetingRe.test(t));
-        } catch (e) {
-          isMeeting = cardTags.some(t => t.toLowerCase().includes(currentConfig.tsMeetingTag.toLowerCase()));
-        }
-
-        let finalTitle = isMeeting ? currentConfig.tsMeetingPattern : currentConfig.tsTaskPattern;
-        finalTitle = `${currentConfig.tsProject}${finalTitle}`;
-
-        Object.entries(vars).forEach(([name, val]) => {
-          finalTitle = finalTitle.replace(new RegExp(`{${name}}`, 'g'), val || "");
-        });
-
         grouped[dateStr].push({ title: finalTitle, cardId: c.id });
         current.setDate(current.getDate() + 1);
       }
@@ -253,7 +240,7 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
     refresh();
   }, [items, config, isLoading, filterOnlyMe, filterTag, includeUnassigned, excludeTitle, allTags]);
 
-  const handleCopyAll = () => {
+  const handleCopyAll = async () => {
     let text = "";
     Object.entries(timesheet).forEach(([date, items]) => {
       const dateObj = new Date(date);
@@ -267,12 +254,12 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
       text += "\n";
     });
     
-    copyToClipboard(text.trim());
+    await copyAndNotify(text.trim(), "Full Timesheet");
     setCopying(true);
     setTimeout(() => setCopying(false), 2000);
   };
 
-  const handleCopyJson = () => {
+  const handleCopyJson = async () => {
     const flatData: { date: string, title: string, cardId: string }[] = [];
     Object.entries(timesheet).forEach(([date, items]) => {
       items.forEach(item => {
@@ -280,10 +267,10 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
       });
     });
     
-    copyToClipboard(JSON.stringify(flatData));
+    await copyAndNotify(JSON.stringify(flatData), "JSON Data");
   };
 
-  const handleCopyDay = (date: string, dayItems: { title: string }[]) => {
+  const handleCopyDay = async (date: string, dayItems: { title: string }[]) => {
     const dateObj = new Date(date);
     const thaiDate = dateObj.toLocaleDateString('th-TH', { 
       weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'
@@ -292,8 +279,7 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
     dayItems.forEach(item => {
       text += `- ${item.title}\n`;
     });
-    copyToClipboard(text.trim());
-    miro.board.notifications.showInfo(`คัดลอกข้อมูลวันที่ ${thaiDate} แล้ว`);
+    await copyAndNotify(text.trim(), `Timesheet for ${thaiDate}`);
   };
 
   const zoomToCard = async (id: string) => {
