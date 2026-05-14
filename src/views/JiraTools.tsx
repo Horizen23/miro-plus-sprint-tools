@@ -603,16 +603,16 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                         setIsScanning(false);
                       }
                     }}
-                    style={{
-                      fontSize: '9px', 
-                      padding: '0 10px', 
-                      height: '18px', 
-                      minWidth: 'auto', 
-                      borderRadius: '10px',
-                      border: '1px solid #5e5ad1', // Explicitly force the border
-                      color: '#5e5ad1',
-                      background: 'none'
-                    }}
+                      style={{
+                        fontSize: '9px', 
+                        padding: '0 10px', 
+                        height: '18px', 
+                        minWidth: 'auto', 
+                        borderRadius: '10px',
+                        border: '1px solid #5e5ad1',
+                        color: '#5e5ad1',
+                        background: 'none'
+                      }}
                   >
                     Scan Board
                   </Button>
