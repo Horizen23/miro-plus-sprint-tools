@@ -199,25 +199,55 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
 
       const { cleanTitle: title, estimate } = parseCardTitle(c.title || "Untitled Card");
       const cleanDisplayTitle = title.replace(/^(\s*\[[^\]]*\])+\s*/, '').trim();
+      const rawTitle = (c.title || "").trim();
+      
+      // 6.5. Pattern Matching for detail filling (Timesheet only)
+      let autoDetail = "";
+      if (currentConfig.tsAutoFillDetailPatterns) {
+        const patterns = currentConfig.tsAutoFillDetailPatterns.split('\n').map(line => {
+          const [key, ...rest] = line.split('=');
+          return { pattern: key.trim(), description: rest.join('=').trim() };
+        }).filter(p => p.pattern)
+        .sort((a, b) => b.pattern.length - a.pattern.length); // Sort longest first
+        
+        // Exact match (100%) against both clean and raw titles
+        const match = patterns.find(p => 
+          cleanDisplayTitle.toLowerCase() === p.pattern.toLowerCase() || 
+          rawTitle.toLowerCase() === p.pattern.toLowerCase()
+        );
+        if (match) {
+          autoDetail = match.description;
+        }
+      }
+
       baseVars.title = cleanDisplayTitle;
       baseVars.estimate = estimate;
+      baseVars.description = autoDetail || c.description || "";
 
       const start = new Date(c.startDate || c.dueDate);
       const end = new Date(c.dueDate || c.startDate);
       const current = new Date(start.getFullYear(), start.getMonth(), start.getDate());
       const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
 
-      const isMeeting = meetingRe 
+      const isMeeting = (meetingRe 
         ? cardTags.some(t => meetingRe!.test(t))
-        : cardTags.some(t => t.toLowerCase().includes(currentConfig.tsMeetingTag.toLowerCase()));
+        : cardTags.some(t => t.toLowerCase().includes(currentConfig.tsMeetingTag.toLowerCase())))
+        || (c.title || "").toLowerCase().includes("meeting");
 
+      // Force include description if it's not in the saved pattern yet
       let pattern = isMeeting ? currentConfig.tsMeetingPattern : currentConfig.tsTaskPattern;
+      if (pattern && !pattern.includes('{description}')) {
+        pattern = pattern + " - {description}";
+      }
+      
       let finalTitle = `${currentConfig.tsProject}${pattern}`;
       Object.entries(baseVars).forEach(([name, val]) => {
         finalTitle = finalTitle.replace(new RegExp(`{${name}}`, 'g'), val || "");
       });
       // Clear any remaining placeholders that weren't matched
-      finalTitle = finalTitle.replace(/\{[^}]+\}/g, "");
+      finalTitle = finalTitle.replace(/\{[^}]+\}/g, "").trim();
+      // Clean up trailing delimiters if description/estimate was empty
+      finalTitle = finalTitle.replace(/\s*-\s*$/, "").replace(/\s*:\s*$/, "");
 
       // 7. Loop through dates
       while (current <= last) {

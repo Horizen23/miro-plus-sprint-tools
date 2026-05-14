@@ -222,6 +222,17 @@ export const SettingsView: React.FC = () => {
               onChange={(e) => setLocalConfig({ ...localConfig, jiraPrefix: e.target.value })}
               placeholder="e.g. FTDGENERIC"
             />
+            <InputField 
+              label="Timesheet Auto-Fill Details"
+              isTextArea
+              style={{ minHeight: '150px', fontSize: '11px' }}
+              value={localConfig.tsAutoFillDetailPatterns}
+              onChange={(e) => setLocalConfig({ ...localConfig, tsAutoFillDetailPatterns: e.target.value })}
+              placeholder="Keyword=Description (one per line)"
+            />
+            <p className="hint" style={{ marginTop: '-4px', marginBottom: '8px' }}>
+              Tip: Use short keywords like "Daily Sync". The system will find them anywhere in the card title.
+            </p>
           </SummaryCard>
         </div>
 

@@ -11,6 +11,7 @@ export interface GlobalConfig {
   tsUserMapping: string;
   jiraDomain: string;
   jiraPrefix: string;
+  tsAutoFillDetailPatterns: string;
 }
 
 export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = {
@@ -18,11 +19,12 @@ export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = {
   tsDefaultProject: process.env.NEXT_PUBLIC_TIMESHEET_DEFAULT_PROJECT || "PLUSOS",
   tsVariables: process.env.NEXT_PUBLIC_TIMESHEET_VARIABLES || "tag=jira-(.+)\nproject=(PLUSOS|SMARTEYES|EXIM)",
   tsMeetingTag: "meeting",
-  tsMeetingPattern: "[Meeting][Sprint] {title}",
+  tsMeetingPattern: "[Meeting][Sprint] {title} - {description}",
   tsTaskPattern: "[Task][{tag}] {title}",
   tsUserMapping: "nickname=email@company.com",
   jiraDomain: "",
   jiraPrefix: process.env.NEXT_PUBLIC_JIRA_PREFIX || "FTDGENERIC",
+  tsAutoFillDetailPatterns: "Code Review=รีวิวและตรวจสอบคุณภาพของ Source Code (Time Block 1: 10:50, 2: 15:00, 3: 16:40)\nDaily=อัปเดตสถานะงานประจำวันและอุปสรรคที่พบ (09:00 - 09:15)\nSprint Planning I=สรุปเป้าหมายและภาพรวมของ Sprint (ร่วมกับ PO)\nSprint Planning II=ทีมวางแผนงานเทคนิคและประเมินความซับซ้อนร่วมกัน\nSprint Refinement I=ทบทวนและลงรายละเอียดของงาน (ร่วมกับ PO)\nSprint Refinement II=ประเมินความยาก (Points) และสรุปความเข้าใจของงาน\nSprint Review=สรุปผลงานและ Demo สิ่งที่ทำเสร็จใน Sprint",
 };
 
 interface GlobalConfigContextType {
@@ -49,7 +51,18 @@ export const GlobalConfigProvider: React.FC<{ children: React.ReactNode }> = ({ 
         const appDataKey = "globalConfig";
         const saved = await (miro.board as any).getAppData(appDataKey);
         if (saved) {
-          setConfig(prev => ({ ...prev, ...(saved as object) }));
+          // Migration logic for key renaming
+          const data = { ...saved };
+          if ((data as any).cardPatterns && !data.tsAutoFillDetailPatterns) {
+            data.tsAutoFillDetailPatterns = (data as any).cardPatterns;
+          }
+          if ((data as any).tsCardPatterns && !data.tsAutoFillDetailPatterns) {
+            data.tsAutoFillDetailPatterns = (data as any).tsCardPatterns;
+          }
+          if ((data as any).tsCardDetailPatterns && !data.tsAutoFillDetailPatterns) {
+            data.tsAutoFillDetailPatterns = (data as any).tsCardDetailPatterns;
+          }
+          setConfig(prev => ({ ...prev, ...(data as object) }));
         } else {
           // Migration from legacy timesheetConfig
           const legacy = await (miro.board as any).getAppData("timesheetConfig");

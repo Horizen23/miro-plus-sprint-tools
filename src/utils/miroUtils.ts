@@ -594,7 +594,6 @@ export async function handleReorderSelectedCards() {
  * Standardized clipboard copy is now handled via copyAndNotify in uiUtils.ts
  * This local version is deprecated.
  */
-export const copyToClipboard = async (text: string): Promise<boolean> => {
-  return await copyAndNotify(text);
-};
+
+
 
