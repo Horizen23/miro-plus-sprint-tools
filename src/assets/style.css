@@ -140,13 +140,41 @@ img {
 .action-area { display: flex; flex-direction: column; gap: 8px; }
 .btn-primary { background: #4262ff; color: white; border: none; padding: 8px 12px; border-radius: 6px; font-weight: 600; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.2s ease; }
 .btn-primary:hover:not(:disabled) { background: #3551d9; }
+
+.btn-ghost-tiny {
+  background: #f0f3ff;
+  color: #4262ff;
+  border: none;
+  font-size: 8px;
+  font-weight: 800;
+  height: 14px;
+  padding: 0 6px;
+  border-radius: 4px;
+  display: inline-flex;
+  alignItems: center;
+  justifyContent: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-ghost-tiny:hover:not(:disabled) {
+  background: #e1e7ff;
+  color: #3551d9;
+}
+
+.btn-ghost-tiny:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .btn-primary:disabled { background: #e0e0e0; color: #999; cursor: not-allowed; }
 .btn-secondary { background: transparent; color: #666; border: 1px solid #e0e0e0; padding: 6px 10px; border-radius: 6px; font-weight: 600; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .footer { margin-top: auto; font-size: 10px; color: #999; display: flex; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid #f0f0f0; }
 .status-dot { width: 8px; height: 8px; background: #e0e0e0; border-radius: 50%; transition: background 0.3s; }
 .status-dot.online { background: #00d142; box-shadow: 0 0 8px rgba(0, 209, 66, 0.4); }
 
-.spinner { width: 16px; height: 16px; border: 2px solid rgba(255, 255, 255, 0.3); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; }
+.spinner { width: 16px; height: 16px; border: 2px solid rgba(66, 98, 255, 0.2); border-top-color: #4262ff; border-radius: 50%; animation: spin 0.8s linear infinite; }
+.btn-primary .spinner { border-color: rgba(255, 255, 255, 0.3); border-top-color: white; }
+.btn-tiny .spinner { width: 10px; height: 10px; border-width: 1.5px; margin-right: 4px; border-color: rgba(66, 98, 255, 0.2); border-top-color: #4262ff; }
 
 .timesheet-section { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
 .section-title { font-size: 13px; font-weight: 700; color: #050038; display: flex; align-items: center; gap: 6px; margin: 0; }

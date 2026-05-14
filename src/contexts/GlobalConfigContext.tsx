@@ -11,6 +11,7 @@ export interface GlobalConfig {
   tsUserMapping: string;
   jiraDomain: string;
   jiraPrefix: string;
+  jiraStoryPointsField: string;
   tsAutoFillDetailPatterns: string;
 }
 
@@ -24,6 +25,7 @@ export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = {
   tsUserMapping: "nickname=email@company.com",
   jiraDomain: "",
   jiraPrefix: process.env.NEXT_PUBLIC_JIRA_PREFIX || "FTDGENERIC",
+  jiraStoryPointsField: process.env.NEXT_PUBLIC_JIRA_STORY_POINTS_FIELD || "customfield_10016",
   tsAutoFillDetailPatterns: "Code Review=รีวิวและตรวจสอบคุณภาพของ Source Code (Time Block 1: 10:50, 2: 15:00, 3: 16:40)\nDaily=อัปเดตสถานะงานประจำวันและอุปสรรคที่พบ (09:00 - 09:15)\nSprint Planning I=สรุปเป้าหมายและภาพรวมของ Sprint (ร่วมกับ PO)\nSprint Planning II=ทีมวางแผนงานเทคนิคและประเมินความซับซ้อนร่วมกัน\nSprint Refinement I=ทบทวนและลงรายละเอียดของงาน (ร่วมกับ PO)\nSprint Refinement II=ประเมินความยาก (Points) และสรุปความเข้าใจของงาน\nSprint Review=สรุปผลงานและ Demo สิ่งที่ทำเสร็จใน Sprint",
 };
 
@@ -106,6 +108,7 @@ export const GlobalConfigProvider: React.FC<{ children: React.ReactNode }> = ({ 
         meetingPattern: updated.tsMeetingPattern,
         taskPattern: updated.tsTaskPattern,
         jiraPrefix: updated.jiraPrefix,
+        jiraStoryPointsField: updated.jiraStoryPointsField,
       });
     } catch (e) {
       console.error("Failed to save global config:", e);

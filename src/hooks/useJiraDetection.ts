@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useGlobalConfig } from "../contexts/GlobalConfigContext";
 import { parseUserMapping } from "../utils/mappingUtils";
-import { parseCardTitle } from "../utils/estimationUtils";
+import { parseCardTitle, calculateSelectionSummary } from "../utils/estimationUtils";
 
 export interface SelectedCard {
   id: string;
@@ -15,6 +15,9 @@ export interface SelectedCard {
   syncedKey?: string;
   lastSyncedTitle?: string;
   lastSyncedDesc?: string;
+  actualHours: number;
+  actualPoints: number;
+  fields?: any[];
   x: number;
   y: number;
 }
@@ -119,22 +122,17 @@ export function useJiraDetection(selection: any[], appParentKey: string) {
         const jiraStampRegex = /---(?:\s|<[^>]+>)*Jira/i;
         cleanDescRaw = cleanDescRaw.split(jiraStampRegex)[0].replace(/(<p[^>]*>|<br\s*\/?>|\s)*$/, '');
 
-        // Caching Logic: Skip parsing if we already have the result for this exact card content
-        let parsedTitle, cleanDesc;
-        if (parseCache.current[item.id] && parseCache.current[item.id].title === itemAny.title && parseCache.current[item.id].desc === itemAny.description) {
-          const cached = parseCache.current[item.id];
-          parsedTitle = cached.parsed;
-          cleanDesc = cached.desc;
-        } else {
-          parsedTitle = parseCardTitle(itemAny.title || "");
-          cleanDesc = htmlToPlainText(cleanDescRaw);
-          parseCache.current[item.id] = { title: itemAny.title, desc: itemAny.description, parsed: parsedTitle };
-        }
+        // 6. Calculate Estimate using central logic during detection
+        const cleanDesc = htmlToPlainText(cleanDescRaw);
+        const cardSummary = calculateSelectionSummary([itemAny]);
 
         items.push({
           id: item.id, type: item.type,
-          title: parsedTitle.cleanTitle,
+          title: itemAny.title || "",
           description: cleanDesc,
+          actualHours: cardSummary.actualHours,
+          actualPoints: cardSummary.points,
+          fields: itemAny.fields,
           startDate: itemAny.startDate,
           dueDate: itemAny.dueDate,
           assigneeId: itemAny.assignee?.userId,

@@ -70,26 +70,34 @@ export const parseCardTitle = (title: string): CardTitleData => {
     .replace(RE_GT, '>')
     .trim();
 
+  // Aggressive cleaning loop: Strip any leading [tags] that might be duplicated
+  let cleaned = rawTitle;
+  const RE_LEADING_BRACKET = /^\s*\[[^\]]+\]\s*/;
+  while (RE_LEADING_BRACKET.test(cleaned)) {
+    cleaned = cleaned.replace(RE_LEADING_BRACKET, '').trim();
+  }
+  
+  // Use the cleaned version for the title part of the result
   const match = rawTitle.match(RE_MAIN_PATTERN);
   if (match) {
     return {
       seq: match[1] === undefined ? "" : match[1],
       estimate: match[2] || "",
-      cleanTitle: match[3] || ""
+      cleanTitle: cleaned
     };
   }
 
   const singleMatch = rawTitle.match(RE_SINGLE_BRACKET);
   if (singleMatch) {
-    return { seq: "", estimate: singleMatch[1] || "", cleanTitle: singleMatch[2] || "" };
+    return { seq: "", estimate: singleMatch[1] || "", cleanTitle: cleaned };
   }
 
   const seqMatch = rawTitle.match(RE_SEQ_ONLY);
   if (seqMatch) {
-    return { seq: seqMatch[1] || "", estimate: "", cleanTitle: seqMatch[2] || "" };
+    return { seq: seqMatch[1] || "", estimate: "", cleanTitle: cleaned };
   }
 
-  return { seq: "", estimate: "", cleanTitle: rawTitle };
+  return { seq: "", estimate: "", cleanTitle: cleaned };
 };
 
 /**

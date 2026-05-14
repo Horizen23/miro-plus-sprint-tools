@@ -223,6 +223,12 @@ export const SettingsView: React.FC = () => {
               placeholder="e.g. FTDGENERIC"
             />
             <InputField 
+              label="Jira Story Points Field"
+              value={localConfig.jiraStoryPointsField}
+              onChange={(e) => setLocalConfig({ ...localConfig, jiraStoryPointsField: e.target.value })}
+              placeholder="e.g. customfield_10016"
+            />
+            <InputField 
               label="Timesheet Auto-Fill Details"
               isTextArea
               style={{ minHeight: '150px', fontSize: '11px' }}

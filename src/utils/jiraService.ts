@@ -126,6 +126,14 @@ export class JiraService {
     return url;
   }
 
+  public getAuthHeader() {
+    return this.authHeader;
+  }
+
+  public getApiBaseUrl() {
+    return this.apiBaseUrl;
+  }
+
   async getAccessibleResources(token: string) {
     const apiBase = process.env.NEXT_PUBLIC_JIRA_API_BASE || "https://api.atlassian.com";
     const response = await fetch(`${apiBase}/oauth/token/accessible-resources`, {
@@ -311,10 +319,12 @@ export class JiraService {
     return await response.json();
   }
 
-  async updateIssue(issueKey: string, summary: string, dueDate?: string, startDate?: string, assigneeAccountId?: string, description?: string) {
-    const fields: any = {
-      summary: summary,
-    };
+  async updateIssue(issueKey: string, summary?: string, dueDate?: string, startDate?: string, assigneeAccountId?: string, description?: string, storyPoints?: number, pointsFieldId?: string) {
+    const fields: any = {};
+    
+    if (summary) {
+      fields.summary = summary;
+    }
 
     if (description) {
       fields.description = textToADF(description);
@@ -326,8 +336,14 @@ export class JiraService {
     
     // Use configurable field ID for Start Date (default: customfield_10015)
     if (startDate) {
-      const fieldId = process.env.JIRA_START_DATE_FIELD || "customfield_10015";
+      const fieldId = process.env.NEXT_PUBLIC_JIRA_START_DATE_FIELD || "customfield_10015";
       fields[fieldId] = startDate.split('T')[0];
+    }
+
+    // Use configurable field ID for Story Points (default: customfield_10016)
+    if (storyPoints !== undefined) {
+      const fieldId = pointsFieldId || process.env.NEXT_PUBLIC_JIRA_STORY_POINTS_FIELD || "customfield_10016";
+      fields[fieldId] = storyPoints;
     }
     
     if (assigneeAccountId) {
@@ -406,5 +422,43 @@ export class JiraService {
     });
     if (!response.ok) return [];
     return await response.json();
+  }
+
+  async findStoryPointsField(): Promise<string | null> {
+    const response = await fetch(`${this.apiBaseUrl}/field`, {
+      headers: {
+        Authorization: this.authHeader,
+        Accept: "application/json",
+      },
+    });
+    
+    if (!response.ok) return null;
+    const fields = await response.json();
+    
+    // Look for common Story Point field names
+    const spField = fields.find((f: any) => 
+      f.name === "Story Points" || 
+      f.name === "Story point estimate" ||
+      f.name === "Points"
+    );
+    
+    return spField ? spField.id : null;
+  }
+
+  async searchIssuesByJql(jql: string, fields: string[] = ['summary']): Promise<any> {
+    const url = `${this.getApiBaseUrl()}/search/jql?jql=${encodeURIComponent(jql)}&fields=${fields.join(',')}`;
+    const response = await fetch(url, {
+      headers: {
+        Authorization: this.getAuthHeader(),
+        Accept: 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Jira API Error ${response.status}: ${error}`);
+    }
+
+    return response.json();
   }
 }

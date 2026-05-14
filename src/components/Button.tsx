@@ -1,7 +1,7 @@
 import * as React from "react";
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "primary" | "secondary" | "icon" | "delete" | "tiny" | "copy" | "point" | "outline";
+  variant?: "primary" | "secondary" | "icon" | "delete" | "tiny" | "copy" | "point" | "outline" | "ghost-tiny";
   loading?: boolean;
   icon?: React.ReactNode;
   fullWidth?: boolean;
@@ -26,13 +26,16 @@ export const Button: React.FC<ButtonProps> = ({
     tiny: "btn-tiny",
     copy: "btn-copy",
     point: "point-btn",
-    outline: "btn-outline"
+    outline: "btn-outline",
+    "ghost-tiny": "btn-ghost-tiny"
   };
 
   const combinedStyle: React.CSSProperties = {
     ...(fullWidth ? { width: "100%" } : {}),
     ...style,
   };
+
+  const isTinyVariant = variant === "tiny" || variant === "ghost-tiny";
 
   return (
     <button
@@ -41,7 +44,17 @@ export const Button: React.FC<ButtonProps> = ({
       disabled={disabled || loading}
       {...props}
     >
-      {loading && <span className="spinner" style={{ marginRight: children ? '8px' : '0' }}></span>}
+      {loading && (
+        <span 
+          className="spinner" 
+          style={{ 
+            marginRight: children ? '4px' : '0',
+            width: isTinyVariant ? '8px' : '12px',
+            height: isTinyVariant ? '8px' : '12px',
+            borderWidth: isTinyVariant ? '1px' : '1.5px'
+          }}
+        ></span>
+      )}
       {!loading && icon}
       {children}
     </button>
