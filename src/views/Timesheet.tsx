@@ -263,9 +263,11 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
       text += "\n";
     });
     
-    await copyAndNotify(text.trim(), "Full Timesheet");
-    setCopying(true);
-    setTimeout(() => setCopying(false), 2000);
+    const success = await copyAndNotify(text.trim(), "Full Timesheet");
+    if (success) {
+      setCopying(true);
+      setTimeout(() => setCopying(false), 2000);
+    }
   }, [timesheet]);
 
   const handleCopyJson = React.useCallback(async () => {
