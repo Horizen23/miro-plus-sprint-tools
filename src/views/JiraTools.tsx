@@ -530,27 +530,33 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                         
                         // 2. Scan Miro items
                         keys.forEach((key: any) => {
+                          const upperKey = key.toUpperCase();
                           const found = allItems.find((item: any) => {
-                            const upperKey = key.toUpperCase();
-                            
-                            // 1. Check Title
-                            if (item.title && item.title.toUpperCase().includes(upperKey)) return true;
-                            
-                            // 2. Check Tags
-                            if (item.tagIds && item.tagIds.some((tid: string) => {
-                              const tagName = tagMap.get(tid);
-                              return tagName && tagName.toLowerCase().includes(key.toLowerCase());
-                            })) return true;
-
-                            // 3. Check App Card Fields (Important for Jira Cards)
+                            // A. Check App Card Fields (The most reliable for Jira Cards)
                             if (item.type === 'app_card' && item.fields) {
-                              if (item.fields.some((f: any) => f.value && f.value.toUpperCase().includes(upperKey))) return true;
+                              if (item.fields.some((f: any) => {
+                                if (!f.value) return false;
+                                const valStr = (typeof f.value === 'string' ? f.value : JSON.stringify(f.value)).toUpperCase();
+                                return valStr.includes(upperKey);
+                              })) return true;
                             }
 
-                            // 4. Check Metadata
+                            // B. Check Title, Content, and Description
+                            const mainText = `${item.title || ""} ${item.content || ""} ${item.description || ""}`.toUpperCase();
+                            if (mainText.includes(upperKey)) return true;
+                            
+                            // C. Check Tags
+                            if (item.tagIds && item.tagIds.some((tid: string) => {
+                              const tagName = tagMap.get(tid);
+                              return tagName && tagName.toUpperCase().includes(upperKey);
+                            })) return true;
+
+                            // D. Check External ID and Metadata
+                            if (item.externalId && item.externalId.toUpperCase().includes(upperKey)) return true;
+                            
                             try {
-                              const metadataStr = JSON.stringify(item.metadata || {});
-                              if (metadataStr.toUpperCase().includes(upperKey)) return true;
+                              const metadataStr = JSON.stringify(item.metadata || "").toUpperCase();
+                              if (metadataStr.includes(upperKey)) return true;
                             } catch(e) {}
 
                             return false;
