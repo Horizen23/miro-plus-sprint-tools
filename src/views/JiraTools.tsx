@@ -512,7 +512,7 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                     )}
                   />
                   <Button 
-                    variant="primary" 
+                    variant="outline"
                     loading={isScanning} 
                     onClick={async () => {
                       setIsScanning(true);
@@ -528,22 +528,35 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                         const keys = Array.from(new Set(selectedCards.map(c => c.detectedParentKey || c.syncedKey).filter(Boolean)));
                         const status: Record<string, string> = {};
                         
-                        // 2. Scan Miro items
+                        // 2. Scan Miro items (Aggressive Search)
                         keys.forEach((key: any) => {
                           const upperKey = key.toUpperCase();
+                          
+                          // First, check if the parent IS one of the selected cards
+                          const foundInSelection = selectedCards.find(c => 
+                            c.id.toUpperCase() === upperKey || 
+                            (c.syncedKey && c.syncedKey.toUpperCase() === upperKey)
+                          );
+                          
+                          if (foundInSelection) {
+                            status[key] = foundInSelection.id;
+                            return;
+                          }
+
+                          // If not in selection, search the whole board items
                           const found = allItems.find((item: any) => {
-                            // A. Check App Card Fields (The most reliable for Jira Cards)
-                            if (item.type === 'app_card' && item.fields) {
-                              if (item.fields.some((f: any) => {
-                                if (!f.value) return false;
-                                const valStr = (typeof f.value === 'string' ? f.value : JSON.stringify(f.value)).toUpperCase();
+                            // A. Check for App Card Fields & Metadata (Most reliable for Jira)
+                            if (item.type === 'app_card') {
+                              // Check fields
+                              if (item.fields && item.fields.some((f: any) => {
+                                const valStr = JSON.stringify(f.value || "").toUpperCase();
                                 return valStr.includes(upperKey);
                               })) return true;
                             }
 
-                            // B. Check Title, Content, and Description
-                            const mainText = `${item.title || ""} ${item.content || ""} ${item.description || ""}`.toUpperCase();
-                            if (mainText.includes(upperKey)) return true;
+                            // B. Check all text properties
+                            const allText = `${item.title || ""} ${item.content || ""} ${item.description || ""} ${item.externalId || ""}`.toUpperCase();
+                            if (allText.includes(upperKey)) return true;
                             
                             // C. Check Tags
                             if (item.tagIds && item.tagIds.some((tid: string) => {
@@ -551,16 +564,15 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                               return tagName && tagName.toUpperCase().includes(upperKey);
                             })) return true;
 
-                            // D. Check External ID and Metadata
-                            if (item.externalId && item.externalId.toUpperCase().includes(upperKey)) return true;
-                            
+                            // D. Check Deep Metadata
                             try {
-                              const metadataStr = JSON.stringify(item.metadata || "").toUpperCase();
-                              if (metadataStr.includes(upperKey)) return true;
+                              const metaStr = JSON.stringify(item.metadata || "").toUpperCase();
+                              if (metaStr.includes(upperKey)) return true;
                             } catch(e) {}
 
                             return false;
                           });
+                          
                           if (found) status[key] = found.id;
                         });
                         
@@ -591,7 +603,16 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                         setIsScanning(false);
                       }
                     }}
-                    style={{fontSize: '9px', padding: '0 10px', height: '18px', minWidth: 'auto', borderRadius: '10px'}}
+                    style={{
+                      fontSize: '9px', 
+                      padding: '0 10px', 
+                      height: '18px', 
+                      minWidth: 'auto', 
+                      borderRadius: '10px',
+                      border: '1px solid #5e5ad1', // Explicitly force the border
+                      color: '#5e5ad1',
+                      background: 'none'
+                    }}
                   >
                     Scan Board
                   </Button>
@@ -635,65 +656,41 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                               <span>{groupCards.length} tasks</span>
                               <span>•</span>
                               <span>{summary.hourRange[0]}-{summary.hourRange[1]}h</span>
-                              {!foundMainCards[key] && <span style={{color: '#ff4d4f', fontWeight: 600}}>· OFF-BOARD</span>}
                             </div>
                             
-                            {foundMainCards[key] && (
-                              <Button 
-                                variant="ghost-tiny"
-                                loading={isRollingUp}
-                                onClick={async () => {
-                                  setIsRollingUp(true);
-                                  try {
-                                    const [allCards, allAppCards, tags] = await Promise.all([
-                                      miro.board.get({type: 'card'}),
-                                      miro.board.get({type: 'app_card'}),
-                                      miro.board.get({type: 'tag'})
-                                    ]);
-                                    const allItems = [...allCards, ...allAppCards];
-                                    const tagMap = new Map(tags.map(t => [t.id, t.title.toLowerCase()]));
-
-                                    const mainCard = allItems.find((item: any) => {
-                                      const upperKey = key.toUpperCase();
-                                      if (item.title && item.title.toUpperCase().includes(upperKey)) return true;
-                                      if (item.tagIds && item.tagIds.some((tid: string) => {
-                                        const tagName = tagMap.get(tid);
-                                        return tagName && tagName.toLowerCase().includes(key.toLowerCase());
-                                      })) return true;
-                                      if (item.type === 'app_card' && item.fields) {
-                                        if (item.fields.some((f: any) => f.value && f.value.toUpperCase().includes(upperKey))) return true;
-                                      }
-                                      try {
-                                        const metadataStr = JSON.stringify(item.metadata || {});
-                                        if (metadataStr.toUpperCase().includes(upperKey)) return true;
-                                      } catch(e) {}
-                                      return false;
-                                    });
-
-                                    if (mainCard) {
-                                      const svc = new JiraService(config);
+                            <div style={{ display: 'flex', alignItems: 'center' }}>
+                              {foundMainCards[key] ? (
+                                <Button 
+                                  variant="ghost-tiny"
+                                  loading={isRollingUp}
+                                  onClick={async () => {
+                                    setIsRollingUp(true);
+                                    try {
                                       let fieldId = globalConfig.jiraStoryPointsField;
+                                      const svc = new JiraService(config);
                                       try {
                                         const detectedId = await svc.findStoryPointsField();
                                         if (detectedId) fieldId = detectedId;
                                       } catch (e) {}
 
                                       await svc.updateIssue(key, undefined, undefined, undefined, undefined, undefined, displayPoints, fieldId);
-                                      if (fieldId !== globalConfig.jiraStoryPointsField) updateConfig({ jiraStoryPointsField: fieldId });
-                                    } else {
-                                      notify(`Main card for ${key} not found`, "error");
+                                      if (fieldId !== globalConfig.jiraStoryPointsField) {
+                                        updateConfig({ jiraStoryPointsField: fieldId });
+                                      }
+                                    } catch (e: any) {
+                                      notify(e.message || "Roll-up Error", "error");
+                                    } finally {
+                                      setIsRollingUp(false);
                                     }
-                                  } catch (e: any) {
-                                    notify(e.message || "Roll-up Error", "error");
-                                  } finally {
-                                    setIsRollingUp(false);
-                                  }
-                                }}
-                                style={{ height: '11px', lineHeight: 1 }}
-                              >
-                                PUSH
-                              </Button>
-                            )}
+                                  }}
+                                  style={{ height: '11px', lineHeight: 1 }}
+                                >
+                                  PUSH
+                                </Button>
+                              ) : (
+                                <span style={{fontSize: '8px', color: '#8c90b0', fontWeight: 600, opacity: 0.8}}>ISSUE NOT FOUND</span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       );
