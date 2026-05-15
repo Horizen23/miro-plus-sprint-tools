@@ -88,13 +88,15 @@ export async function resolveJiraAssignees(
           targetAssignees.push(accountId);
           cacheUtils.set(USER_CACHE_KEY, accountId, 3600 * 24 * 7); // 7 days cache
         }
-      } catch (e) {}
+      } catch (e: any) {}
     }
   }
 
   if (targetAssignees.length === 0) {
     if (isMe || (miroAssigneeId && miroAssigneeId === currentMiroUserId)) {
-      if (myAccountId) targetAssignees.push(myAccountId);
+      if (myAccountId) {
+        targetAssignees.push(myAccountId);
+      }
     }
   }
 
@@ -138,8 +140,12 @@ export async function syncCardStatus(
   
   // 2. Jira Sync
   if (jiraWithRefresh) {
-    const syncedKeys = await detectJiraKeys(card);
-
+    // For status sync, we should be very strict: Only sync if explicitly linked via metadata
+    // Tags are often used for "Parent" references, so they shouldn't trigger a status sync on the parent.
+    const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
+    const metadata = await card.getMetadata(metadataKey) as { key?: string } | undefined;
+    const syncedKeys = metadata?.key ? metadata.key.split(',').map(k => k.trim()).filter(Boolean) : [];
+    
     if (syncedKeys.length > 0) {
       try {
         const targetAssignees = await resolveJiraAssignees(

@@ -37,7 +37,7 @@ import { executeWithRefresh } from '@/hooks/useJira';
 // 2. JIRA SYNC HANDLERS
 // ==========================================
 
-const createStatusHandler = (status: 'to-do' | 'in-progress' | 'done', boardId: string | null, fallbackConfig: any) => async (props: { items: any[] }) => {
+const createStatusHandler = (status: 'to-do' | 'in-progress' | 'done', boardId: string | null, fallbackConfig: any) => async (props: { items?: any[] }) => {
   let userInfo: any = null;
   try { userInfo = await miro.board.getUserInfo(); } catch(e) {}
 
@@ -73,21 +73,39 @@ const createStatusHandler = (status: 'to-do' | 'in-progress' | 'done', boardId: 
     } catch (e) {}
   }
 
-  const cards = props.items.filter(i => i.type === 'card' || i.type === 'app_card') as (Card | AppCard)[];
-  
-  for (const item of cards) {
-    const result = await syncCardStatus(item, status, hasJiraConfig ? executeWithRefresh : null, {
-      userInfo,
-      myAccountId,
-      mapping: globalMapping,
-      ignoreRegex,
-      boardTags: allBoardTags
-    });
+  // Use props items or fallback to selection
+  let rawItems = props?.items || [];
+  if (rawItems.length === 0) {
+    rawItems = await miro.board.getSelection();
+  }
 
-    if (!result.success && result.message) {
-      await notify(result.message, 'error');
-    } else if (result.jiraUpdated) {
-      await notify(`Jira: Status updated to ${status}`);
+  const cards = rawItems.filter((i: any) => i.type === 'card' || i.type === 'app_card') as (Card | AppCard)[];
+  
+  if (cards.length === 0) {
+    await notify("Please select at least one card", "error");
+    return;
+  }
+
+  for (const item of cards) {
+    try {
+      const result = await syncCardStatus(item, status, hasJiraConfig ? executeWithRefresh : null, {
+        userInfo,
+        myAccountId,
+        mapping: globalMapping,
+        ignoreRegex,
+        boardTags: allBoardTags
+      });
+
+      if (!result.success && result.message) {
+        await notify(result.message, 'error');
+      } else {
+        const msg = result.jiraUpdated 
+          ? `Jira & Miro: Status updated to ${status}` 
+          : `Miro: Status updated to ${status}`;
+        await notify(msg);
+      }
+    } catch (err: any) {
+      await notify(`System Error: ${err.message}`, 'error');
     }
   }
 };
@@ -102,7 +120,6 @@ export default function InitContent() {
 
   useEffect(() => {
     if (!boardId) return;
-
     // Handlers
     const handleIconClick = async () => { await miro.board.ui.openPanel({ url: getFullPath('panel') }); };
     const todoHandler = createStatusHandler('to-do', boardId, gConfig);
@@ -138,13 +155,14 @@ export default function InitContent() {
 
       // 4. Initialize Realtime Voting Socket
       const realtime = RealtimeFactory.getInstance();
-      realtime.connect(boardId);
-
-      unsubscribeRealtime = realtime.onStateUpdate(async (state: VotingState) => {
-        if (state.status === 'voting') {
-          await miro.board.ui.openModal({ url: getFullPath(`/voting?cardId=${state.cardId}`), width: 450, height: 750 });
-        }
-      });
+      if (boardId) {
+        realtime.connect(boardId);
+        unsubscribeRealtime = realtime.onStateUpdate(async (state: VotingState) => {
+          if (state.status === 'voting') {
+            await miro.board.ui.openModal({ url: getFullPath(`/voting?cardId=${state.cardId}`), width: 450, height: 750 });
+          }
+        });
+      }
     };
 
     initExtensions();
