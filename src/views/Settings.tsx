@@ -33,7 +33,7 @@ export const SettingsView: React.FC = () => {
     }
 
     // 2. Identify active caches with TTL info
-    const activeCaches: { name: string, expiry: number }[] = [];
+    const activeCaches: { name: string, expiry: number, prefix: string }[] = [];
     const keys = Object.keys(localStorage);
     
     keys.forEach(k => {
@@ -42,22 +42,28 @@ export const SettingsView: React.FC = () => {
         if (entry && entry.expiry) {
           if (k.startsWith('miro_cache_tags_')) {
             if (!activeCaches.find(c => c.name === "Miro Tags")) 
-              activeCaches.push({ name: "Miro Tags", expiry: entry.expiry });
+              activeCaches.push({ name: "Miro Tags", expiry: entry.expiry, prefix: 'miro_cache_tags_' });
           } else if (k.startsWith('jira_cache_user_')) {
             if (!activeCaches.find(c => c.name === "Jira Users"))
-              activeCaches.push({ name: "Jira Users", expiry: entry.expiry });
+              activeCaches.push({ name: "Jira Users", expiry: entry.expiry, prefix: 'jira_cache_user_' });
           } else if (k.startsWith('jira_cache_issue_types_')) {
             if (!activeCaches.find(c => c.name === "Jira Issue Types"))
-              activeCaches.push({ name: "Jira Issue Types", expiry: entry.expiry });
+              activeCaches.push({ name: "Jira Issue Types", expiry: entry.expiry, prefix: 'jira_cache_issue_types_' });
           } else if (k.startsWith('miro_cache_user_info')) {
             if (!activeCaches.find(c => c.name === "User Info"))
-              activeCaches.push({ name: "User Info", expiry: entry.expiry });
+              activeCaches.push({ name: "User Info", expiry: entry.expiry, prefix: 'miro_cache_user_info' });
           }
         }
       } catch(e) {}
     });
     
     setCacheInfo(activeCaches as any);
+  };
+
+  const handleClearSpecificCache = (prefix: string, name: string) => {
+    cacheUtils.clearByPrefix(prefix);
+    loadSystemInfo();
+    miro.board.notifications.showInfo(`Cleared cache: ${name}`);
   };
 
   const handleClearCache = () => {
@@ -117,8 +123,8 @@ export const SettingsView: React.FC = () => {
             
             {cacheInfo.length > 0 && (
               <div style={{ fontSize: '11px', marginBottom: '12px' }}>
-                <div style={{ opacity: 0.6, marginBottom: '4px' }}>Data Caches (API Acceleration):</div>
-                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                <div style={{ opacity: 0.6, marginBottom: '6px' }}>Data Caches (Click to clear individually):</div>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                   {cacheInfo.map((c: any) => {
                     const minutes = Math.max(0, Math.round((c.expiry - Date.now()) / 1000 / 60));
                     const formatTime = (m: number) => {
@@ -128,17 +134,34 @@ export const SettingsView: React.FC = () => {
                     };
                     
                     return (
-                      <span key={c.name} style={{ 
-                        background: '#008f5d', 
-                        color: '#ffffff', 
-                        padding: '2px 8px', 
-                        borderRadius: '4px', 
-                        fontSize: '10px',
-                        fontWeight: 600,
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-                      }}>
+                      <button 
+                        key={c.name} 
+                        onClick={() => handleClearSpecificCache(c.prefix, c.name)}
+                        className="cache-badge-btn"
+                        title={`Clear ${c.name} cache`}
+                        style={{ 
+                          background: '#008f5d', 
+                          color: '#ffffff', 
+                          padding: '3px 10px', 
+                          borderRadius: '6px', 
+                          fontSize: '10px',
+                          fontWeight: 600,
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
+                          border: 'none',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          transition: 'all 0.2s ease',
+                          outline: 'none'
+                        }}
+                      >
                         {c.name} ({formatTime(minutes)})
-                      </span>
+                        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.7 }}>
+                          <line x1="18" y1="6" x2="6" y2="18"></line>
+                          <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                      </button>
                     );
                   })}
                 </div>

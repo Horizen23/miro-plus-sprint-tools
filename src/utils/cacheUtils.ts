@@ -64,5 +64,17 @@ export const cacheUtils = {
         localStorage.removeItem(key);
       }
     });
+  },
+
+  /**
+   * Clear caches by prefix
+   */
+  clearByPrefix: (prefix: string) => {
+    const keys = Object.keys(localStorage);
+    keys.forEach(key => {
+      if (key.startsWith(prefix)) {
+        localStorage.removeItem(key);
+      }
+    });
   }
 };
