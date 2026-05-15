@@ -397,116 +397,129 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
             )}
           </div>
         ) : (
-          <>
-            {showConfig && (
-              <div className="config-body" style={{marginBottom: '12px'}}>
-                <SummaryCard>
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                    <span style={{fontSize: '11px', color: '#8c90b0'}}>Jira Integration</span>
-                    <Button variant="tiny" onClick={logout} style={{color: '#ff4d4f'}}>Logout</Button>
-                  </div>
-                  <SummaryDivider />
-                  <SummaryItem label="Connected" value={config.baseUrl?.replace('https://', '')} />
-                  <SummaryItem label="Auth Type" value={config.authType.toUpperCase()} />
-                </SummaryCard>
-              </div>
-            )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* 1. Context & Config Section */}
+            <div className="context-section">
+              {showConfig && (
+                <div className="config-body" style={{marginBottom: '12px'}}>
+                  <SummaryCard>
+                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                      <span style={{fontSize: '11px', color: '#8c90b0'}}>Jira Integration</span>
+                      <Button variant="tiny" onClick={logout} style={{color: '#ff4d4f'}}>Logout</Button>
+                    </div>
+                    <SummaryDivider />
+                    <SummaryItem label="Connected" value={config.baseUrl?.replace('https://', '')} />
+                    <SummaryItem label="Auth Type" value={config.authType.toUpperCase()} />
+                  </SummaryCard>
+                </div>
+              )}
 
-            <div className="search-section" style={{position: 'relative'}}>
-              <div style={{display: 'flex', gap: '4px'}}>
-                <div style={{flex: 1, position: 'relative'}}>
-                  <InputField 
-                    placeholder="Search Parent Issue (Key or Title)"
-                    value={searchQuery}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
-                  />
-                  {(isSearching || isPending) && (
-                    <div className="spinner-tiny" style={{position: 'absolute', right: '10px', top: '10px', width: '12px', height: '12px'}} />
+              <div className="search-section" style={{ position: 'relative' }}>
+                <SectionHeader title="Target Parent Issue" icon={<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>} />
+                <div style={{display: 'flex', gap: '4px', marginBottom: '4px'}}>
+                  <div style={{flex: 1, position: 'relative'}}>
+                    <InputField 
+                      placeholder="Search Key or Title..."
+                      value={searchQuery}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
+                    />
+                    {(isSearching || isPending) && (
+                      <div className="spinner-tiny" style={{position: 'absolute', right: '10px', top: '10px', width: '12px', height: '12px'}} />
+                    )}
+                  </div>
+                  {appParentKey && (
+                    <Button 
+                      variant="tiny" 
+                      onClick={() => { setAppParentKey(""); setAppParentTitle(""); }}
+                    >
+                      Clear
+                    </Button>
                   )}
                 </div>
+
                 {appParentKey && (
-                  <Button 
-                    variant="tiny" 
-                    onClick={() => { setAppParentKey(""); setAppParentTitle(""); }}
-                  >
-                    Clear
-                  </Button>
+                  <div className="selected-parent-badge" style={{
+                    padding: '8px 10px', borderRadius: '8px', 
+                    backgroundColor: '#eef1ff', border: '1px solid #d0d7ff',
+                    fontSize: '11px', display: 'flex', justifyContent: 'space-between',
+                    boxShadow: '0 2px 6px rgba(66, 98, 255, 0.08)'
+                  }}>
+                    <div style={{overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '8px'}}>
+                      <strong style={{color: '#4262ff'}}>{appParentKey}</strong>: {appParentTitle}
+                    </div>
+                  </div>
+                )}
+
+                {searchResults.length > 0 && (
+                  <SummaryCard style={{
+                    position: 'absolute', top: 'calc(100% - 4px)', left: 0, right: 0, zIndex: 100,
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+                    maxHeight: '200px', overflowY: 'auto', border: '1px solid #4262ff'
+                  }}>
+                    {renderedSearchResults}
+                  </SummaryCard>
                 )}
               </div>
-
-              {appParentKey && (
-                <div className="selected-parent-badge" style={{
-                  marginTop: '4px', padding: '6px 10px', borderRadius: '6px', 
-                  backgroundColor: '#eef1ff', border: '1px solid #d0d7ff',
-                  fontSize: '11px', display: 'flex', justifyContent: 'space-between'
-                }}>
-                  <div style={{overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '8px'}}>
-                    <strong style={{color: '#4262ff'}}>{appParentKey}</strong>: {appParentTitle}
-                  </div>
-                </div>
-              )}
-
-              {searchResults.length > 0 && (
-                <SummaryCard style={{
-                  position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.15)', marginTop: '4px',
-                  maxHeight: '200px', overflowY: 'auto'
-                }}>
-                  {renderedSearchResults}
-                </SummaryCard>
-              )}
             </div>
 
-            <SummaryDivider style={{margin: '12px 0'}} />
-
+            {/* 2. Selection & Sync Section */}
             <div className="sync-section">
-              <div className="timesheet-section">
-                <div className="section-header-row">
-                  <span className="group-title">Preview Selection</span>
-                  <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
-                    {selectedCards.length > 0 && (
-                      <Button variant="tiny" onClick={handleSelectAll} style={{fontSize: '8px', padding: '1px 5px'}}>
-                        {checkedIds.size === validItemsCount && validItemsCount > 0 ? 'Unselect All' : 'Select All'}
-                      </Button>
-                    )}
-                    <div style={{fontSize: '9px', color: '#8c90b0', fontWeight: 600}}>
-                      {checkedIds.size} ready
-                    </div>
+              <div className="section-header-row" style={{ marginBottom: '8px' }}>
+                <span className="group-title">Selection Preview</span>
+                <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
+                  {selectedCards.length > 0 && (
+                    <Button variant="tiny" onClick={handleSelectAll} style={{fontSize: '9px', padding: '2px 8px'}}>
+                      {checkedIds.size === validItemsCount && validItemsCount > 0 ? 'Unselect All' : 'Select All'}
+                    </Button>
+                  )}
+                  <div style={{fontSize: '10px', color: '#8c90b0', fontWeight: 700}}>
+                    {checkedIds.size} Ready
                   </div>
                 </div>
-                <div className="timesheet-group" style={{maxHeight: '140px', overflowY: 'auto'}}>
-                  {selectedCards.length > 0 ? (
-                    <div className="titles-container">
-                      {renderedSelectedCards}
+              </div>
+
+              <div className="items-list-container" style={{ 
+                maxHeight: '160px', overflowY: 'auto', 
+                backgroundColor: '#fcfcfd', border: '1px solid #eaeaeb', borderRadius: '12px',
+                padding: '4px'
+              }}>
+                {selectedCards.length > 0 ? (
+                  <div className="titles-container">
+                    {renderedSelectedCards}
+                  </div>
+                ) : (
+                  <div style={{padding: '30px 20px', textAlign: 'center', fontSize: '12px', color: '#8c90b0'}}>
+                    <div style={{marginBottom: '8px', opacity: 0.5}}>
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
                     </div>
-                  ) : (
-                    <div style={{padding: '20px', textAlign: 'center', fontSize: '12px', color: '#8c90b0'}}>
-                      Select cards on Miro board...
-                    </div>
-                  )}
-                </div>
+                    Select cards on board to sync
+                  </div>
+                )}
               </div>
 
               <Button 
                 loading={isProcessing}
                 onClick={syncToJira}
                 fullWidth
-                style={{marginTop: '4px'}}
+                style={{marginTop: '12px', height: '36px', fontSize: '12px'}}
                 disabled={checkedIds.size === 0}
               >
-                Sync & Update {checkedIds.size} Items
+                Sync & Update Jira Issues
               </Button>
             </div>
 
-            {/* --- Point Roll-up Section --- */}
+            {/* 3. Point Roll-up Section */}
             {selectedCards.length > 0 && (
-              <div className="rollup-section" style={{marginTop: '20px'}}>
-                <SummaryDivider style={{margin: '12px 0'}} />
-                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+              <div className="rollup-section" style={{
+                marginTop: '8px', padding: '16px', borderRadius: '16px', 
+                backgroundColor: '#f8f9ff', border: '1px solid #eef0f7',
+                boxShadow: '0 4px 12px rgba(66, 98, 255, 0.04)'
+              }}>
+                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px'}}>
                   <SectionHeader 
-                    title="Point Roll-up (Main Card)" 
+                    title="Point Roll-up" 
                     icon={(
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4262ff" strokeWidth="3">
                         <path d="M12 20v-6M6 20V10M18 20V4"></path>
                       </svg>
                     )}
@@ -528,100 +541,58 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                         const keys = Array.from(new Set(selectedCards.map(c => c.detectedParentKey || c.syncedKey).filter(Boolean)));
                         const status: Record<string, string> = {};
                         
-                        // 2. Scan Miro items (Aggressive Search)
                         keys.forEach((key: any) => {
                           const upperKey = key.toUpperCase();
-                          
-                          // First, check if the parent IS one of the selected cards
                           const foundInSelection = selectedCards.find(c => 
                             c.id.toUpperCase() === upperKey || 
                             (c.syncedKey && c.syncedKey.toUpperCase() === upperKey)
                           );
-                          
-                          if (foundInSelection) {
-                            status[key] = foundInSelection.id;
-                            return;
-                          }
+                          if (foundInSelection) { status[key] = foundInSelection.id; return; }
 
-                          // If not in selection, search the whole board items
                           const found = allItems.find((item: any) => {
-                            // A. Check for App Card Fields & Metadata (Most reliable for Jira)
-                            if (item.type === 'app_card') {
-                              // Check fields
-                              if (item.fields && item.fields.some((f: any) => {
-                                const valStr = JSON.stringify(f.value || "").toUpperCase();
-                                return valStr.includes(upperKey);
-                              })) return true;
-                            }
-
-                            // B. Check all text properties
+                            if (item.type === 'app_card' && item.fields && item.fields.some((f: any) => JSON.stringify(f.value || "").toUpperCase().includes(upperKey))) return true;
                             const allText = `${item.title || ""} ${item.content || ""} ${item.description || ""} ${item.externalId || ""} ${item.url || ""}`.toUpperCase();
                             if (allText.includes(upperKey)) return true;
-                            
-                            // C. Check Tags
-                            if (item.tagIds && item.tagIds.some((tid: string) => {
-                              const tagName = tagMap.get(tid);
-                              return tagName && tagName.toUpperCase().includes(upperKey);
-                            })) return true;
-
-                            // D. Check Deep Metadata
-                            try {
-                              const metaStr = JSON.stringify(item.metadata || "").toUpperCase();
-                              if (metaStr.includes(upperKey)) return true;
-                            } catch(e) {}
-
+                            if (item.tagIds && item.tagIds.some((tid: string) => (tagMap.get(tid) || "").toUpperCase().includes(upperKey))) return true;
+                            try { if (JSON.stringify(item.metadata || "").toUpperCase().includes(upperKey)) return true; } catch(e) {}
                             return false;
                           });
-                          
                           if (found) status[key] = found.id;
                         });
-                        
                         setFoundMainCards(status);
 
-                        // 3. Fetch Jira Titles (Bulk)
                         if (keys.length > 0) {
-                          // Fetch summaries for all unique keys - handle potential spaces or weird characters
                           const safeKeys = keys.map(k => `"${k}"`).join(',');
-                          const jql = `key in (${safeKeys})`;
-                          
-                          const data: any = await withRefresh(s => s.searchIssuesByJql(jql, ['summary']));
-                          
+                          const data: any = await withRefresh(s => s.searchIssuesByJql(`key in (${safeKeys})`, ['summary']));
                           if (data && data.issues) {
                             const titles: Record<string, string> = {};
-                            data.issues.forEach((iss: any) => {
-                              titles[iss.key] = iss.fields.summary;
-                            });
+                            data.issues.forEach((iss: any) => { titles[iss.key] = iss.fields.summary; });
                             setJiraTitles(prev => ({ ...prev, ...titles }));
                           }
                         }
-                        
-                        // No notification for success, just update the UI state
-                      } catch (e: any) {
-                        console.error("Scan detailed error:", e);
-                        notify(e.message || "Scan failed", "error");
-                      } finally {
-                        setIsScanning(false);
-                      }
+                      } catch (e: any) { notify(e.message || "Scan failed", "error"); }
+                      finally { setIsScanning(false); }
                     }}
-                      style={{
-                        fontSize: '9px', 
-                        padding: '0 10px', 
-                        height: '18px', 
-                        minWidth: 'auto', 
-                        borderRadius: '10px',
-                        border: '1px solid #5e5ad1',
-                        color: '#5e5ad1',
-                        background: 'none'
-                      }}
+                    style={{
+                      fontSize: '9px', height: '22px', borderRadius: '11px',
+                      border: '1px solid #4262ff', color: '#4262ff', background: '#fff'
+                    }}
                   >
                     Scan Board
                   </Button>
                 </div>
                 
-                <div style={{marginTop: '8px'}}>
+                <div style={{
+                  display: 'flex', 
+                  flexDirection: 'column', 
+                  gap: '8px', 
+                  maxHeight: '200px', 
+                  overflowY: 'auto',
+                  paddingRight: '4px' // Space for scrollbar
+                }}>
                   {(() => {
                     const keys = Array.from(new Set(selectedCards.map(c => c.detectedParentKey || c.syncedKey).filter(Boolean))) as string[];
-                    if (keys.length === 0) return <div style={{fontSize: '11px', color: '#8c90b0', textAlign: 'center', padding: '10px'}}>No Jira keys detected for roll-up</div>;
+                    if (keys.length === 0) return <div style={{fontSize: '11px', color: '#8c90b0', textAlign: 'center', padding: '16px'}}>No keys detected in selection.</div>;
 
                     return keys.map(key => {
                       const groupCards = selectedCards.filter(c => (c.detectedParentKey || c.syncedKey) === key);
@@ -630,30 +601,27 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
 
                       return (
                         <div key={key} style={{
-                          padding: '8px 0',
-                          borderBottom: '1px solid #f1f3f5',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '2px'
+                          padding: '6px 10px', borderRadius: '10px',
+                          backgroundColor: '#fff', border: '1px solid #f1f3f5',
+                          display: 'flex', flexDirection: 'column', gap: '2px',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
                         }}>
-                          {/* Header Line: Key & Title */}
                           <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                             <div style={{display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0}}>
-                              <span style={{fontSize: '11px', fontWeight: 700, color: '#4262ff'}}>{key}</span>
+                              <span style={{fontSize: '10px', fontWeight: 800, color: '#4262ff'}}>{key}</span>
                               <span style={{
-                                fontSize: '11px', color: '#2c3e50', fontWeight: 500,
+                                fontSize: '10px', color: '#2c3e50', fontWeight: 600,
                                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
                               }}>
-                                {jiraTitles[key] || ""}
+                                {jiraTitles[key] || "..."}
                               </span>
                             </div>
-                            <div style={{fontSize: '12px', fontWeight: 800, color: '#2c3e50'}}>{displayPoints}pt</div>
+                            <div style={{fontSize: '12px', fontWeight: 800, color: '#050038'}}>{displayPoints}pt</div>
                           </div>
 
-                          {/* Detail Line: Stats & Action */}
                           <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                            <div style={{fontSize: '10px', color: '#8c90b0', display: 'flex', gap: '8px'}}>
-                              <span>{groupCards.length} tasks</span>
+                            <div style={{fontSize: '9px', color: '#8c90b0', display: 'flex', gap: '6px', fontWeight: 500}}>
+                              <span>{groupCards.length} Tasks</span>
                               <span>•</span>
                               <span>{summary.hourRange[0]}-{summary.hourRange[1]}h</span>
                             </div>
@@ -672,24 +640,18 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                                         const detectedId = await svc.findStoryPointsField();
                                         if (detectedId) fieldId = detectedId;
                                       } catch (e) {}
-
                                       await svc.updateIssue(key, undefined, undefined, undefined, undefined, undefined, displayPoints, fieldId);
-                                      if (fieldId !== globalConfig.jiraStoryPointsField) {
-                                        updateConfig({ jiraStoryPointsField: fieldId });
-                                      }
+                                      if (fieldId !== globalConfig.jiraStoryPointsField) updateConfig({ jiraStoryPointsField: fieldId });
                                       notify(`Pushed ${displayPoints}pt to ${key}`, "info");
-                                    } catch (e: any) {
-                                      notify(e.message || "Roll-up Error", "error");
-                                    } finally {
-                                      setIsRollingUp(false);
-                                    }
+                                    } catch (e: any) { notify(e.message || "Roll-up Error", "error"); }
+                                    finally { setIsRollingUp(false); }
                                   }}
-                                  style={{ height: '11px', lineHeight: 1 }}
+                                  style={{ height: '16px', padding: '0 8px', fontSize: '8px', fontWeight: 700 }}
                                 >
                                   PUSH
                                 </Button>
                               ) : (
-                                <span style={{fontSize: '8px', color: '#ff4d4f', fontWeight: 600, opacity: 0.8}}>ISSUE NOT FOUND</span>
+                                <span style={{fontSize: '8px', color: '#ff4d4f', fontWeight: 700, opacity: 0.8}}>ISSUE NOT FOUND</span>
                               )}
                             </div>
                           </div>
@@ -700,7 +662,7 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                 </div>
               </div>
             )}
-          </>
+          </div>
         )}
       </main>
     </div>
