@@ -79,7 +79,7 @@ export function useJiraDetection(selection: any[], appParentKey: string) {
     try {
       // 1. Get Tags with a simple 5-second cache to avoid redundant SDK calls
       const CACHE_KEY = 'miro_tags_cache';
-      const CACHE_TIME = 24 * 3600 * 1000; // 1 day in ms
+      const CACHE_TIME = 30 * 1000; // 30 seconds instead of 1 day
       let tags = (window as any)[CACHE_KEY]?.data;
       const lastFetch = (window as any)[CACHE_KEY]?.timestamp || 0;
 

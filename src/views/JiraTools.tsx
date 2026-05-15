@@ -133,7 +133,7 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
 
       // Use Shared Tags Cache (1 day)
       const TAGS_CACHE_KEY = 'miro_tags_cache';
-      const TAGS_CACHE_TIME = 24 * 3600 * 1000;
+      const TAGS_CACHE_TIME = 30 * 1000;
       let cachedTags = (window as any)[TAGS_CACHE_KEY]?.data;
       if (!cachedTags || Date.now() - ((window as any)[TAGS_CACHE_KEY]?.timestamp || 0) > TAGS_CACHE_TIME) {
         cachedTags = await miro.board.get({ type: 'tag' }).catch(() => []);
@@ -555,7 +555,7 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                             }
 
                             // B. Check all text properties
-                            const allText = `${item.title || ""} ${item.content || ""} ${item.description || ""} ${item.externalId || ""}`.toUpperCase();
+                            const allText = `${item.title || ""} ${item.content || ""} ${item.description || ""} ${item.externalId || ""} ${item.url || ""}`.toUpperCase();
                             if (allText.includes(upperKey)) return true;
                             
                             // C. Check Tags
@@ -658,8 +658,8 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                               <span>{summary.hourRange[0]}-{summary.hourRange[1]}h</span>
                             </div>
                             
-                            <div style={{ display: 'flex', alignItems: 'center' }}>
-                              {foundMainCards[key] ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              {jiraTitles[key] ? (
                                 <Button 
                                   variant="ghost-tiny"
                                   loading={isRollingUp}
@@ -677,6 +677,7 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                                       if (fieldId !== globalConfig.jiraStoryPointsField) {
                                         updateConfig({ jiraStoryPointsField: fieldId });
                                       }
+                                      notify(`Pushed ${displayPoints}pt to ${key}`, "info");
                                     } catch (e: any) {
                                       notify(e.message || "Roll-up Error", "error");
                                     } finally {
@@ -688,7 +689,7 @@ export const JiraTools: React.FC<{ selection?: any[] }> = ({ selection = [] }) =
                                   PUSH
                                 </Button>
                               ) : (
-                                <span style={{fontSize: '8px', color: '#8c90b0', fontWeight: 600, opacity: 0.8}}>ISSUE NOT FOUND</span>
+                                <span style={{fontSize: '8px', color: '#ff4d4f', fontWeight: 600, opacity: 0.8}}>ISSUE NOT FOUND</span>
                               )}
                             </div>
                           </div>
