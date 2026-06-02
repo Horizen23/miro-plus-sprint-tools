@@ -5,14 +5,14 @@ export class SupabaseAdapter implements RealtimeService {
   private client: SupabaseClient;
   private channel: RealtimeChannel | null = null;
 
-  // Suggestion 1: Set of callbacks instead of single callback
+  // Set of callbacks instead of single callback
   private callbacks = new Set<RealtimeCallback>();
 
-  // Suggestion 2: Channel readiness gate — queues messages until SUBSCRIBED
+  // Channel readiness gate — queues messages until SUBSCRIBED
   private channelReady = false;
-  private pendingMessages: Array<{ event: string; payload: any }> = [];
+  private pendingMessages: Array<{ event: string; payload: unknown }> = [];
 
-  // Suggestion 4: Auth channel pool to prevent leaks
+  // Auth channel pool to prevent leaks
   private authChannels = new Map<string, RealtimeChannel>();
 
   constructor(url: string, key: string) {
@@ -40,7 +40,7 @@ export class SupabaseAdapter implements RealtimeService {
           this.channelReady = true;
           // Flush any messages that were queued before the channel was ready
           for (const msg of this.pendingMessages) {
-            this.channel!.send({ type: 'broadcast', ...msg });
+            this.channel?.send({ type: 'broadcast', ...msg });
           }
           this.pendingMessages = [];
         }
@@ -54,8 +54,8 @@ export class SupabaseAdapter implements RealtimeService {
       this.channelReady = false;
       this.pendingMessages = [];
     }
-    // Suggestion 4: Cleanup all auth channels too
-    for (const [, ch] of this.authChannels) {
+    // Cleanup all auth channels too
+    for (const ch of this.authChannels.values()) {
       this.client.removeChannel(ch);
     }
     this.authChannels.clear();
@@ -67,7 +67,7 @@ export class SupabaseAdapter implements RealtimeService {
     this.safeSend('join-session', { cardId, userId });
   }
 
-  updateState(cardId: string, state: VotingState) {
+  updateState(_cardId: string, state: VotingState) {
     this.safeSend('voting-state-updated', state);
   }
 
@@ -93,7 +93,6 @@ export class SupabaseAdapter implements RealtimeService {
   }
 
   joinAuth(state: string) {
-    // Suggestion 4: Reuse existing channel if available
     const channel = this.getOrCreateAuthChannel(state);
     channel.subscribe();
   }
@@ -128,8 +127,8 @@ export class SupabaseAdapter implements RealtimeService {
     const channel = this.getOrCreateAuthChannel(state);
     channel
       .on('broadcast', { event: 'auth-success' }, (payload) => {
-        if (payload.payload?.code) {
-          callback(payload.payload.code);
+        if (payload.payload && typeof payload.payload === 'object' && (payload.payload as Record<string, unknown>).code) {
+          callback((payload.payload as Record<string, string>).code);
           this.cleanupAuthChannel(state);
         }
       })
@@ -146,14 +145,14 @@ export class SupabaseAdapter implements RealtimeService {
     for (const cb of this.callbacks) {
       try {
         cb(state);
-      } catch (e) {
+      } catch (e: unknown) {
         console.error('[SupabaseAdapter] Callback error:', e);
       }
     }
   }
 
-  /** Suggestion 2: Send a message, queuing it if channel is not yet SUBSCRIBED */
-  private safeSend(event: string, payload: any) {
+  /** Send a message, queuing it if channel is not yet SUBSCRIBED */
+  private safeSend(event: string, payload: unknown) {
     if (this.channelReady && this.channel) {
       this.channel.send({ type: 'broadcast', event, payload });
     } else {
@@ -161,7 +160,7 @@ export class SupabaseAdapter implements RealtimeService {
     }
   }
 
-  /** Suggestion 4: Reuse or create an auth channel to prevent duplicates */
+  /** Reuse or create an auth channel to prevent duplicates */
   private getOrCreateAuthChannel(state: string): RealtimeChannel {
     const key = `auth-${state}`;
     const existing = this.authChannels.get(key);
@@ -172,7 +171,7 @@ export class SupabaseAdapter implements RealtimeService {
     return channel;
   }
 
-  /** Suggestion 4: Remove and cleanup a specific auth channel */
+  /** Remove and cleanup a specific auth channel */
   private cleanupAuthChannel(state: string) {
     const key = `auth-${state}`;
     const channel = this.authChannels.get(key);

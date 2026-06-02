@@ -1,40 +1,58 @@
-export const handleSelectAll = async () => {
+import type { Card, AppCard, Item } from "@mirohq/websdk-types";
+
+export const handleSelectAll = async (): Promise<void> => {
+  if (typeof miro === 'undefined') return;
+  
   const cards = await miro.board.get({ type: 'card' });
   const appCards = await miro.board.get({ type: 'app_card' });
   const all = [...cards, ...appCards];
   await miro.board.select({ id: all.map(i => i.id) });
 };
 
-export const handleSelectInView = async () => {
+interface Position {
+  x: number;
+  y: number;
+}
+
+export const handleSelectInView = async (): Promise<void> => {
+  if (typeof miro === 'undefined') return;
+
   try {
     const viewport = await miro.board.viewport.get();
     
     // Fetch all items to build coordinate map
     const allItems = await miro.board.get();
-    const cards = allItems.filter(i => i.type === 'card' || i.type === 'app_card');
-    const allMap = new Map(allItems.map(i => [i.id, i]));
-    const absPositions = new Map<string, {x: number, y: number}>();
+    const selectableItems = allItems.filter((i): i is Card | AppCard => i.type === 'card' || i.type === 'app_card');
+    const allMap = new Map<string, Item>(allItems.map(i => [i.id, i]));
+    const absPositions = new Map<string, Position>();
 
-    const getAbsolutePos = (item: any): {x: number, y: number} => {
-      if (absPositions.has(item.id)) return absPositions.get(item.id)!;
-      let pos = { x: item.x || 0, y: item.y || 0 };
-      if (item.parentId) {
-        const parent = allMap.get(item.parentId);
+    const getAbsolutePos = (item: Item): Position => {
+      const cached = absPositions.get(item.id);
+      if (cached) return cached;
+
+      const pos: Position = { 
+        x: (item as unknown as Record<string, number>).x ?? 0, 
+        y: (item as unknown as Record<string, number>).y ?? 0 
+      };
+
+      if ((item as unknown as { parentId?: string }).parentId) {
+        const parentId = (item as unknown as { parentId: string }).parentId;
+        const parent = allMap.get(parentId);
         // In Miro V2, both FRAMES and GROUPS use relative coordinates for children
         if (parent && (parent.type === 'frame' || parent.type === 'group')) {
           const parentPos = getAbsolutePos(parent);
-          pos.x += (parentPos.x || 0);
-          pos.y += (parentPos.y || 0);
+          pos.x += parentPos.x;
+          pos.y += parentPos.y;
         }
       }
       absPositions.set(item.id, pos);
       return pos;
     };
 
-    const inView = cards.filter(card => {
+    const inView = selectableItems.filter(card => {
       const pos = getAbsolutePos(card);
-      const w = (card as any).width || 100; // Default width if missing
-      const h = (card as any).height || 100;
+      const w = (card as unknown as Record<string, number>).width ?? 100; // Default width if missing
+      const h = (card as unknown as Record<string, number>).height ?? 100;
       
       // Card bounding box (using absolute coordinates)
       const cardLeft = pos.x - w / 2;
@@ -42,7 +60,7 @@ export const handleSelectInView = async () => {
       const cardTop = pos.y - h / 2;
       const cardBottom = pos.y + h / 2;
 
-      // Viewport bounding box (assuming center-based as it's the most likely given previous 'almost good' result)
+      // Viewport bounding box (assuming center-based)
       const vLeft = viewport.x - viewport.width / 2;
       const vRight = viewport.x + viewport.width / 2;
       const vTop = viewport.y - viewport.height / 2;
@@ -61,7 +79,7 @@ export const handleSelectInView = async () => {
     } else {
       await miro.board.notifications.showInfo("No cards found in current view area");
     }
-  } catch (e) {
-    console.error(e);
+  } catch (e: unknown) {
+    console.error("[selectionUtils] Failed to select in view:", e);
   }
 };

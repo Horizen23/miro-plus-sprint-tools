@@ -32,7 +32,7 @@ export class SocketIOAdapter implements RealtimeService {
     this.socket = null;
   }
 
-  private safeEmit(event: string, data: any) {
+  private safeEmit(event: string, data: unknown) {
     if (this.socket?.connected) {
       this.socket.emit(event, data);
     } else {
@@ -100,7 +100,7 @@ export class SocketIOAdapter implements RealtimeService {
     for (const cb of this.callbacks) {
       try {
         cb(state);
-      } catch (e) {
+      } catch (e: unknown) {
         console.error('[SocketIOAdapter] Callback error:', e);
       }
     }

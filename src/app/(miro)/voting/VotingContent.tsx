@@ -3,11 +3,13 @@
 import * as React from 'react';
 import { VotingSession } from '@/components/VotingSession';
 import { useVotingSession } from '@/hooks/useVotingSession';
-import { handleSetPointsOnItems } from '@/utils/estimationUtils';
+import { handleSetPointsOnItems } from '@/services/miro/estimationUtils';
+
+import type { Card, AppCard } from '@mirohq/websdk-types';
 
 export default function VotingContent() {
   // Real implementation for applying points in the modal
-  const handleSetPointsInModal = async (points: string, items?: any[]) => {
+  const handleSetPointsInModal = async (points: string, items?: (Card | AppCard)[]) => {
     if (items && items.length > 0) {
       await handleSetPointsOnItems(items, points);
     }

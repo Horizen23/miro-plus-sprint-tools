@@ -1,85 +1,86 @@
 'use client';
 
 import React, { useEffect } from 'react';
-import { Card, AppCard, CustomAction } from '@mirohq/websdk-types';
+import type { Card, AppCard, CustomAction, Tag, UserInfo, Item } from '@mirohq/websdk-types';
 import { RealtimeFactory } from '@/services/realtime/factory';
 import { VotingState } from '@/services/realtime/types';
-import { JiraService } from '@/utils/jiraService';
-import { parseUserMapping, getCardMappedUser, getCardMappedUsers, isUserOwnerOfCard } from '@/utils/mappingUtils';
+import { parseUserMapping } from '@/services/jira/mappingUtils';
+import { useGlobalConfig, GlobalConfig } from '@/contexts/GlobalConfigContext';
+import { notify } from '@/services/miro/uiUtils';
+import { syncCardStatus } from '@/services/jira/syncUtils';
+import { executeWithRefresh } from '@/hooks/useJira';
 import { cacheUtils } from '@/utils/cacheUtils';
-import { useGlobalConfig } from '@/contexts/GlobalConfigContext';
 
 // ==========================================
 // 1. UTILITY FUNCTIONS
 // ==========================================
 
-import { notify } from '@/utils/uiUtils';
-
-const getFullPath = (path: string) => {
+const getFullPath = (path: string): string => {
   const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || "";
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   return `${BASE_PATH}${cleanPath}`;
 };
 
 // ==========================================
-// 2. JIRA SYNC BUSINESS LOGIC
-// ==========================================
-
-import { syncCardStatus } from '@/utils/jiraSyncUtils';
-
-// ==========================================
 // 2. JIRA SYNC HANDLERS
 // ==========================================
 
-import { executeWithRefresh } from '@/hooks/useJira';
+const createStatusHandler = (
+  status: 'to-do' | 'in-progress' | 'done', 
+  _boardId: string | null, 
+  fallbackConfig: GlobalConfig
+) => async (props?: { items?: Item[] }): Promise<void> => {
+  if (typeof miro === 'undefined') return;
 
-// ==========================================
-// 2. JIRA SYNC HANDLERS
-// ==========================================
-
-const createStatusHandler = (status: 'to-do' | 'in-progress' | 'done', boardId: string | null, fallbackConfig: any) => async (props: { items?: any[] }) => {
-  let userInfo: any = null;
-  try { userInfo = await miro.board.getUserInfo(); } catch(e) {}
+  let userInfo: UserInfo | null = null;
+  try { 
+    userInfo = await miro.board.getUserInfo(); 
+  } catch(e: unknown) {
+    console.warn("[InitContent] Failed to get user info:", e);
+  }
 
   const configKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_CONFIG_KEY || "jira-config-v2";
   const hasJiraConfig = !!localStorage.getItem(configKey);
 
-  const freshConfig = await (miro.board as any).getAppData("globalConfig");
+  const freshConfig = await (miro.board as unknown as { getAppData: (key: string) => Promise<GlobalConfig | undefined> }).getAppData("globalConfig");
   const activeConfig = freshConfig || fallbackConfig;
+  
   let ignoreRegex = "";
   let globalMapping = new Map<string, string>();
-  let allBoardTags: any[] = [];
+  let allBoardTags: Tag[] = [];
 
   try {
     const TAGS_CACHE_KEY = 'miro_tags_cache';
-    const TAGS_CACHE_TIME = 24 * 3600 * 1000;
-    let cachedTags = (window as any)[TAGS_CACHE_KEY]?.data;
-    if (!cachedTags || Date.now() - ((window as any)[TAGS_CACHE_KEY]?.timestamp || 0) > TAGS_CACHE_TIME) {
-      cachedTags = await miro.board.get({ type: 'tag' }).catch(() => []);
-      (window as any)[TAGS_CACHE_KEY] = { data: cachedTags, timestamp: Date.now() };
+    const TAGS_TTL = 3600;
+    
+    allBoardTags = cacheUtils.get<Tag[]>(TAGS_CACHE_KEY) || [];
+
+    if (allBoardTags.length === 0) {
+      allBoardTags = await miro.board.get({ type: 'tag' }).catch(() => [] as Tag[]);
+      cacheUtils.set(TAGS_CACHE_KEY, allBoardTags, TAGS_TTL);
     }
-    allBoardTags = cachedTags!;
+    
     globalMapping = parseUserMapping(activeConfig?.tsUserMapping || "");
     const vars = activeConfig?.tsVariables || "";
     const tagLine = vars.split('\n').find((l: string) => l.trim().startsWith('tag='));
     if (tagLine) ignoreRegex = tagLine.split('=')[1]?.trim() || "";
-  } catch(e) {}
+  } catch(e: unknown) {}
 
   let myAccountId: string | undefined;
   if (hasJiraConfig) {
     try {
       const myself = await executeWithRefresh(s => s.getMyself());
       myAccountId = myself?.accountId;
-    } catch (e) {}
+    } catch (e: unknown) {}
   }
 
   // Use props items or fallback to selection
-  let rawItems = props?.items || [];
+  let rawItems: Item[] = props?.items || [];
   if (rawItems.length === 0) {
     rawItems = await miro.board.getSelection();
   }
 
-  const cards = rawItems.filter((i: any) => i.type === 'card' || i.type === 'app_card') as (Card | AppCard)[];
+  const cards = rawItems.filter((i: Item): i is Card | AppCard => i.type === 'card' || i.type === 'app_card');
   
   if (cards.length === 0) {
     await notify("Please select at least one card", "error");
@@ -104,8 +105,9 @@ const createStatusHandler = (status: 'to-do' | 'in-progress' | 'done', boardId: 
           : `Miro: Status updated to ${status}`;
         await notify(msg);
       }
-    } catch (err: any) {
-      await notify(`System Error: ${err.message}`, 'error');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      await notify(`System Error: ${message}`, 'error');
     }
   }
 };
@@ -119,9 +121,13 @@ export default function InitContent() {
   const { boardId, config: gConfig } = useGlobalConfig();
 
   useEffect(() => {
-    if (!boardId) return;
+    if (!boardId || typeof miro === 'undefined') return;
+
     // Handlers
-    const handleIconClick = async () => { await miro.board.ui.openPanel({ url: getFullPath('panel') }); };
+    const handleIconClick = async () => { 
+      await miro.board.ui.openPanel({ url: getFullPath('panel') }); 
+    };
+    
     const todoHandler = createStatusHandler('to-do', boardId, gConfig);
     const inprogressHandler = createStatusHandler('in-progress', boardId, gConfig);
     const doneHandler = createStatusHandler('done', boardId, gConfig);
@@ -129,19 +135,21 @@ export default function InitContent() {
     let unsubscribeRealtime: (() => void) | undefined;
 
     const initExtensions = async () => {
+      if (typeof miro === 'undefined') return;
+
       // 1. Clean previous listeners
       try {
         miro.board.ui.off('icon:click', handleIconClick);
-        miro.board.ui.off('custom:set-todo', todoHandler);
-        miro.board.ui.off('custom:set-inprogress', inprogressHandler);
-        miro.board.ui.off('custom:set-done', doneHandler);
-      } catch (e) {}
+        miro.board.ui.off('custom:set-todo', todoHandler as unknown as (e: unknown) => void);
+        miro.board.ui.off('custom:set-inprogress', inprogressHandler as unknown as (e: unknown) => void);
+        miro.board.ui.off('custom:set-done', doneHandler as unknown as (e: unknown) => void);
+      } catch (e: unknown) {}
 
       // 2. Register listeners
       miro.board.ui.on('icon:click', handleIconClick);
-      miro.board.ui.on('custom:set-todo', todoHandler);
-      miro.board.ui.on('custom:set-inprogress', inprogressHandler);
-      miro.board.ui.on('custom:set-done', doneHandler);
+      miro.board.ui.on('custom:set-todo', todoHandler as unknown as (e: unknown) => void);
+      miro.board.ui.on('custom:set-inprogress', inprogressHandler as unknown as (e: unknown) => void);
+      miro.board.ui.on('custom:set-done', doneHandler as unknown as (e: unknown) => void);
 
       // 3. Register Custom Actions in UI
       const actions: CustomAction[] = [
@@ -150,8 +158,17 @@ export default function InitContent() {
         { event: "set-done", ui: { label: "Set Done", icon: "trophy", description: "Set status and stamp dates", position: 3 }, predicate: { type: "card" } }
       ];
       try {
-        for (const action of actions) await miro.board.experimental.action.register(action);
-      } catch (e) {}
+        const experimental = miro.board as unknown as { 
+          experimental: { 
+            action: { register: (a: CustomAction) => Promise<void>, deregister: (e: string) => Promise<void> } 
+          } 
+        };
+        if (experimental.experimental?.action?.register) {
+          for (const action of actions) {
+            await experimental.experimental.action.register(action);
+          }
+        }
+      } catch (e: unknown) {}
 
       // 4. Initialize Realtime Voting Socket
       const realtime = RealtimeFactory.getInstance();
@@ -159,7 +176,11 @@ export default function InitContent() {
         realtime.connect(boardId);
         unsubscribeRealtime = realtime.onStateUpdate(async (state: VotingState) => {
           if (state.status === 'voting') {
-            await miro.board.ui.openModal({ url: getFullPath(`/voting?cardId=${state.cardId}`), width: 450, height: 750 });
+            await miro.board.ui.openModal({ 
+              url: getFullPath(`/voting?cardId=${state.cardId}`), 
+              width: 450, 
+              height: 750 
+            });
           }
         });
       }
@@ -169,22 +190,28 @@ export default function InitContent() {
 
     // Cleanup phase
     return () => {
+      if (typeof miro === 'undefined') return;
       try {
         miro.board.ui.off('icon:click', handleIconClick);
-        miro.board.ui.off('custom:set-todo', todoHandler);
-        miro.board.ui.off('custom:set-inprogress', inprogressHandler);
-        miro.board.ui.off('custom:set-done', doneHandler);
+        miro.board.ui.off('custom:set-todo', todoHandler as unknown as (e: unknown) => void);
+        miro.board.ui.off('custom:set-inprogress', inprogressHandler as unknown as (e: unknown) => void);
+        miro.board.ui.off('custom:set-done', doneHandler as unknown as (e: unknown) => void);
         
-        if (miro.board.experimental?.action?.deregister) {
-          miro.board.experimental.action.deregister('set-todo');
-          miro.board.experimental.action.deregister('set-inprogress');
-          miro.board.experimental.action.deregister('set-done');
+        const experimental = miro.board as unknown as { 
+          experimental: { 
+            action: { deregister: (e: string) => Promise<void> } 
+          } 
+        };
+        if (experimental.experimental?.action?.deregister) {
+          experimental.experimental.action.deregister('set-todo');
+          experimental.experimental.action.deregister('set-inprogress');
+          experimental.experimental.action.deregister('set-done');
         }
 
         if (unsubscribeRealtime) {
           unsubscribeRealtime();
         }
-      } catch (e) {}
+      } catch (e: unknown) {}
     };
   }, [boardId]); // Deliberately omit gConfig to prevent listener thrashing; config is fetched fresh inside handlers.
 

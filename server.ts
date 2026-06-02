@@ -10,6 +10,14 @@ const port = parseInt(process.env.PORT || "3000", 10);
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
+interface VotingState {
+  cardId: string;
+  cardTitle: string;
+  status: 'voting' | 'revealed' | null;
+  votes: Record<string, string>;
+  participants?: string[];
+}
+
 app.prepare().then(() => {
   const httpServer = createServer((req, res) => {
     const parsedUrl = parse(req.url!, true);
@@ -24,7 +32,7 @@ app.prepare().then(() => {
   });
 
   // Store active voting sessions and their participants in memory
-  const votingSessions: Record<string, any> = {};
+  const votingSessions: Record<string, VotingState> = {};
   const participants: Record<string, Set<string>> = {}; // cardId -> Set of userIds
 
   io.on("connection", (socket) => {
@@ -40,7 +48,7 @@ app.prepare().then(() => {
     });
 
     // Helper: emit to board room or globally (fallback for clients without boardId)
-    const emitToBoard = (event: string, data: any) => {
+    const emitToBoard = (event: string, data: VotingState | { cardId: string, status: null }) => {
       if (currentBoardId) {
         io.to(`board-${currentBoardId}`).emit(event, data);
       } else {
@@ -48,7 +56,7 @@ app.prepare().then(() => {
       }
     };
 
-    socket.on("join-session", ({ cardId, userId }) => {
+    socket.on("join-session", ({ cardId, userId }: { cardId: string, userId: string }) => {
       socket.join(`session-${cardId}`);
       
       // Track participant
@@ -57,9 +65,10 @@ app.prepare().then(() => {
         participants[cardId].add(userId);
         
         // Sync with voting session object
-        if (votingSessions[cardId]) {
-          votingSessions[cardId].participants = Array.from(participants[cardId]);
-          emitToBoard("voting-state-updated", votingSessions[cardId]);
+        const session = votingSessions[cardId];
+        if (session) {
+          session.participants = Array.from(participants[cardId]);
+          emitToBoard("voting-state-updated", session);
         }
       }
 
@@ -69,7 +78,7 @@ app.prepare().then(() => {
       }
     });
 
-    socket.on("update-voting-state", ({ cardId, state }) => {
+    socket.on("update-voting-state", ({ cardId, state }: { cardId: string, state: VotingState }) => {
       console.log(`Server: Updating voting state for card ${cardId} to status: ${state.status}`);
       console.log(`Server: Votes: ${Object.keys(state.votes || {}).length}, Participants: ${state.participants?.length || 0}`);
       votingSessions[cardId] = state;
@@ -83,11 +92,12 @@ app.prepare().then(() => {
       emitToBoard("voting-state-updated", { cardId, status: null });
     });
 
-    socket.on("cast-vote", ({ cardId, userId, vote }) => {
-      if (votingSessions[cardId]) {
-        if (!votingSessions[cardId].votes) votingSessions[cardId].votes = {};
-        votingSessions[cardId].votes[userId] = vote;
-        emitToBoard("voting-state-updated", votingSessions[cardId]);
+    socket.on("cast-vote", ({ cardId, userId, vote }: { cardId: string, userId: string, vote: string }) => {
+      const session = votingSessions[cardId];
+      if (session) {
+        if (!session.votes) session.votes = {};
+        session.votes[userId] = vote;
+        emitToBoard("voting-state-updated", session);
       }
     });
 
@@ -97,7 +107,7 @@ app.prepare().then(() => {
       socket.join(`auth-${state}`);
     });
 
-    socket.on("complete-auth", ({ state, code }) => {
+    socket.on("complete-auth", ({ state, code }: { state: string, code: string }) => {
       console.log(`Server: Auth completed for state ${state}. Broadcasting to room...`);
       // Broadcast specifically to the room where the Miro App is waiting
       io.to(`auth-${state}`).emit("auth-success", { state, code });

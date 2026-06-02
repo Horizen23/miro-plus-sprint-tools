@@ -1,8 +1,47 @@
 import { useState, useEffect, useMemo } from "react";
 import type { Card, AppCard, Item } from "@mirohq/websdk-types";
-import { handleSetPointsOnItems, calculateSelectionSummary } from "../utils/estimationUtils";
+import { handleSetPointsOnItems, calculateSelectionSummary, type SelectionSummary } from "../services/miro/estimationUtils";
+import { handleSelectAll, handleSelectInView } from "../services/miro/selectionUtils";
+import {
+  handleDuplicateAndLink,
+  handleCreateRefinementFrame,
+  handleRemoveLinks,
+  handleReorderSelectedCards,
+  handleSyncMetadataFromParent,
+  handleClearMetadata,
+} from "../services/miro/miroUtils";
 
-export function useSprintSelection() {
+export interface InspectedMetadata {
+  title: string;
+  data: unknown;
+}
+
+export interface UseSprintSelectionReturn {
+  isProcessing: boolean;
+  setIsProcessing: (val: boolean) => void;
+  activeAction: string | null;
+  estimateUnit: 'pt' | 'h';
+  setEstimateUnit: (unit: 'pt' | 'h') => void;
+  summary: SelectionSummary;
+  selectedItems: (Card | AppCard)[];
+  memoizedItems: (Card | AppCard)[];
+  rawSelection: Item[];
+  handleSetPoints: (points: string, itemsToUpdate?: (Card | AppCard)[]) => Promise<void>;
+  handleAction: (actionName: string, fn: () => Promise<unknown>) => Promise<void>;
+  handleInspectMetadata: () => Promise<void>;
+  inspectedMetadata: InspectedMetadata[] | null;
+  setInspectedMetadata: (data: InspectedMetadata[] | null) => void;
+  handleSelectAll: () => Promise<void>;
+  handleSelectInView: () => Promise<void>;
+  handleDuplicateAndLink: () => Promise<void>;
+  handleCreateRefinementFrame: () => Promise<void>;
+  handleRemoveLinks: () => Promise<void>;
+  handleReorderSelectedCards: () => Promise<void>;
+  handleSyncMetadataFromParent: () => Promise<void>;
+  handleClearMetadata: () => Promise<void>;
+}
+
+export function useSprintSelection(): UseSprintSelectionReturn {
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [manualProcessing, setManualProcessing] = useState(false);
   const isProcessing = !!activeAction || manualProcessing;
@@ -18,6 +57,7 @@ export function useSprintSelection() {
     
     const fetchSelection = async () => {
       try {
+        if (typeof miro === 'undefined') return;
         const items = await miro.board.getSelection();
         const filteredItems = items.filter(item => item.type === 'card' || item.type === 'app_card');
         if (!unmounted) {
@@ -27,7 +67,7 @@ export function useSprintSelection() {
             return prevIds === newIds ? prev : filteredItems;
           });
         }
-      } catch (e) {
+      } catch (e: unknown) {
         console.error("Failed to fetch selection", e);
       }
     };
@@ -42,19 +82,23 @@ export function useSprintSelection() {
       }, 200);
     };
     
-    miro.board.ui.on('selection:update', handleUpdate);
+    if (typeof miro !== 'undefined') {
+      miro.board.ui.on('selection:update', handleUpdate);
+    }
     return () => {
       unmounted = true;
       clearTimeout(updateTimer);
-      miro.board.ui.off('selection:update', handleUpdate);
+      if (typeof miro !== 'undefined') {
+        miro.board.ui.off('selection:update', handleUpdate);
+      }
     };
   }, []);
   
   const selectedItems = useMemo(() => {
-    return rawSelection.filter((item: Item) => item.type === 'card' || item.type === 'app_card') as (Card | AppCard)[];
+    return rawSelection.filter((item: Item): item is Card | AppCard => item.type === 'card' || item.type === 'app_card');
   }, [rawSelection]);
 
-  const summary = useMemo(() => {
+  const summary = useMemo((): SelectionSummary => {
     return calculateSelectionSummary(selectedItems);
   }, [selectedItems]);
 
@@ -66,7 +110,7 @@ export function useSprintSelection() {
     }
   }, [selectedItems]);
 
-  const handleAction = async (actionName: string, fn: () => Promise<any>) => {
+  const handleAction = async (actionName: string, fn: () => Promise<unknown>) => {
     setActiveAction(actionName);
     try {
       await fn();
@@ -81,6 +125,8 @@ export function useSprintSelection() {
       items = memoizedItems;
     }
 
+    if (typeof miro === 'undefined') return;
+
     if (!items || items.length === 0) {
       await miro.board.notifications.showError("Please select at least one card");
       return;
@@ -90,18 +136,20 @@ export function useSprintSelection() {
     try {
       await handleSetPointsOnItems(items, points.endsWith('h') || estimateUnit === 'h' ? (points.endsWith('h') ? points : points + 'h') : points);
       await miro.board.notifications.showInfo(`Updated ${items.length} items`);
-    } catch (e) {
+    } catch (e: unknown) {
       await miro.board.notifications.showError("Failed to update points");
     } finally {
       setActiveAction(null);
     }
   };
 
-  const [inspectedMetadata, setInspectedMetadata] = useState<{title: string, data: any}[] | null>(null);
+  const [inspectedMetadata, setInspectedMetadata] = useState<InspectedMetadata[] | null>(null);
 
   const handleInspectMetadata = async () => {
     if (selectedItems.length === 0) {
-      await miro.board.notifications.showError("Please select at least one card to inspect metadata");
+      if (typeof miro !== 'undefined') {
+        await miro.board.notifications.showError("Please select at least one card to inspect metadata");
+      }
       return;
     }
     
@@ -111,9 +159,11 @@ export function useSprintSelection() {
         const metadata = await card.getMetadata();
         return { title: card.title || "Untitled", data: metadata };
       }));
-      setInspectedMetadata(results);
-    } catch (e) {
-      await miro.board.notifications.showError("Failed to fetch metadata");
+      setInspectedMetadata(results as InspectedMetadata[]);
+    } catch (e: unknown) {
+      if (typeof miro !== 'undefined') {
+        await miro.board.notifications.showError("Failed to fetch metadata");
+      }
     } finally {
       setActiveAction(null);
     }
@@ -133,6 +183,14 @@ export function useSprintSelection() {
     handleAction,
     handleInspectMetadata,
     inspectedMetadata,
-    setInspectedMetadata
+    setInspectedMetadata,
+    handleSelectAll,
+    handleSelectInView,
+    handleDuplicateAndLink,
+    handleCreateRefinementFrame,
+    handleRemoveLinks,
+    handleReorderSelectedCards,
+    handleSyncMetadataFromParent,
+    handleClearMetadata,
   };
 }

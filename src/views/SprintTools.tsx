@@ -4,33 +4,10 @@ import { SectionHeader } from "../components/SectionHeader";
 import { SelectionSummary } from "../components/SelectionSummary";
 import { EstimationTools } from "../components/EstimationTools";
 import { SprintActions } from "../components/SprintActions";
+import { usePanel } from "@/contexts/PanelContext";
 
 interface SprintToolsProps {
-  votingSession: any;
-  handleResetVoting: () => void;
-  estimateUnit: 'pt' | 'h';
-  setEstimateUnit: (unit: 'pt' | 'h') => void;
-  summary: any;
-  handleAction: (name: string, fn: () => Promise<any>) => void;
-  activeAction: string | null;
-  handleCreateSticky: (notes: string[], parentFrameId?: string) => Promise<any>;
-  handleSetPoints: (p: string) => void;
-  isProcessing: boolean;
-  handleStartVoting: () => void;
-  handleCreateRefinementFrame: () => Promise<any>;
-  handleDuplicateAndLink: () => Promise<any>;
-  handleRemoveLinks: () => Promise<any>;
-  handleReorderSelectedCards: () => Promise<any>;
-  handleSyncMetadataFromParent: () => Promise<any>;
-  handleClearMetadata: () => Promise<any>;
-  handleInspectMetadata: () => Promise<any>;
-  inspectedMetadata: { title: string; data: any }[] | null;
-  setInspectedMetadata: (data: { title: string; data: any }[] | null) => void;
-  showGuide: boolean;
-  setShowGuide: (show: boolean) => void;
-  handleSelectAll: () => void;
-  handleSelectInView: () => void;
-  onlineUsersCount?: number;
+  handleCreateSticky: (notes: string[], parentFrameId?: string) => Promise<void>;
   handleRefresh?: () => Promise<void>;
   handleCastVote?: (p: string) => void;
   handleRevealVotes?: () => void;
@@ -39,36 +16,39 @@ interface SprintToolsProps {
 }
 
 export const SprintTools: React.FC<SprintToolsProps> = ({
-  votingSession,
-  handleResetVoting,
-  estimateUnit,
-  setEstimateUnit,
-  summary,
-  handleAction,
-  activeAction,
   handleCreateSticky,
-  handleSetPoints,
-  isProcessing,
-  handleStartVoting,
-  handleCreateRefinementFrame,
-  handleDuplicateAndLink,
-  handleRemoveLinks,
-  handleReorderSelectedCards,
-  handleSyncMetadataFromParent,
-  handleClearMetadata,
-  handleInspectMetadata,
-  inspectedMetadata,
-  setInspectedMetadata,
-  showGuide,
-  setShowGuide,
-  handleSelectAll,
-  handleSelectInView,
   handleRefresh,
   handleCastVote,
   handleRevealVotes,
   handleApplyVote,
   currentUserId,
 }) => {
+  const {
+    votingSession,
+    handleResetVoting,
+    estimateUnit,
+    setEstimateUnit,
+    summary,
+    handleAction,
+    activeAction,
+    handleSetPoints,
+    isProcessing,
+    handleStartVoting,
+    handleCreateRefinementFrame,
+    handleDuplicateAndLink,
+    handleRemoveLinks,
+    handleReorderSelectedCards,
+    handleSyncMetadataFromParent,
+    handleClearMetadata,
+    handleInspectMetadata,
+    inspectedMetadata,
+    setInspectedMetadata,
+    showGuide,
+    setShowGuide,
+    handleSelectAll,
+    handleSelectInView,
+  } = usePanel();
+
   return (
     <>
       <SectionHeader 
@@ -84,40 +64,13 @@ export const SprintTools: React.FC<SprintToolsProps> = ({
       />
       
       <SelectionSummary 
-        summary={summary}
-        handleAction={handleAction}
         handleCreateSticky={handleCreateSticky}
       />
 
       <div className="action-area">
-        <EstimationTools 
-          estimateUnit={estimateUnit}
-          setEstimateUnit={setEstimateUnit}
-          handleSetPoints={handleSetPoints}
-          isProcessing={isProcessing}
-          itemCount={summary.count}
-        />
+        <EstimationTools />
 
-        <SprintActions 
-          handleSelectAll={handleSelectAll}
-          handleSelectInView={handleSelectInView}
-          handleStartVoting={handleStartVoting}
-          handleAction={handleAction}
-          activeAction={activeAction}
-          handleCreateRefinementFrame={handleCreateRefinementFrame}
-          handleDuplicateAndLink={handleDuplicateAndLink}
-          handleRemoveLinks={handleRemoveLinks}
-          handleReorderSelectedCards={handleReorderSelectedCards}
-          handleSyncMetadataFromParent={handleSyncMetadataFromParent}
-          handleClearMetadata={handleClearMetadata}
-          handleInspectMetadata={handleInspectMetadata}
-          isProcessing={isProcessing}
-          itemCount={summary.count}
-          showGuide={showGuide}
-          setShowGuide={setShowGuide}
-          votingSession={votingSession}
-          handleResetVoting={handleResetVoting}
-        />
+        <SprintActions />
       </div>
 
       {inspectedMetadata && typeof document !== 'undefined' && createPortal(

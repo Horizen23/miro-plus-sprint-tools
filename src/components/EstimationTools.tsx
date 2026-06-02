@@ -1,21 +1,18 @@
 import * as React from "react";
 import { Button } from "./Button";
+import { usePanel } from "@/contexts/PanelContext";
 
-interface EstimationToolsProps {
-  estimateUnit: 'pt' | 'h';
-  setEstimateUnit: (unit: 'pt' | 'h') => void;
-  handleSetPoints: (p: string) => void;
-  isProcessing: boolean;
-  itemCount: number;
-}
+export const EstimationTools: React.FC = () => {
+  const {
+    estimateUnit,
+    setEstimateUnit,
+    handleSetPoints,
+    isProcessing,
+    summary,
+  } = usePanel();
 
-export const EstimationTools: React.FC<EstimationToolsProps> = ({
-  estimateUnit,
-  setEstimateUnit,
-  handleSetPoints,
-  isProcessing,
-  itemCount,
-}) => {
+  const itemCount = summary.count;
+
   return (
     <>
       <div className="section-header-row">

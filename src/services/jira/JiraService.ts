@@ -1,3 +1,5 @@
+import { cacheUtils } from '../../utils/cacheUtils';
+
 export interface JiraConfig {
   baseUrl?: string;
   email?: string;
@@ -10,18 +12,29 @@ export interface JiraConfig {
   authType: 'basic' | 'oauth';
 }
 
-// Helper to convert Plain Text (with newlines, links, and bullets) to Jira ADF
-export function textToADF(text: string) {
+export interface ADFNode {
+  type: string;
+  text?: string;
+  marks?: { type: string; attrs?: Record<string, unknown> }[];
+  content?: ADFNode[];
+  attrs?: Record<string, unknown>;
+  version?: number;
+}
 
-  const content: any[] = [];
+// Helper to convert Plain Text (with newlines, links, and bullets) to Jira ADF
+export function textToADF(text: string): ADFNode {
+  const content: ADFNode[] = [];
   const lines = text.split('\n');
 
-  let currentList: any = null;
+  let currentList: ADFNode | null = null;
 
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) {
-      if (currentList) { content.push(currentList); currentList = null; }
+      if (currentList) {
+        content.push(currentList);
+        currentList = null;
+      }
       content.push({ type: "paragraph", content: [] });
       continue;
     }
@@ -29,10 +42,10 @@ export function textToADF(text: string) {
     const isBullet = trimmed.startsWith('- ') || trimmed.startsWith('* ');
     const isNumbered = /^\d+\.\s/.test(trimmed);
 
-    const inlineContent: any[] = [];
+    const inlineContent: ADFNode[] = [];
     const urlRegex = /(https?:\/\/[^\s]+)/g;
     let lastIndex = 0;
-    let match;
+    let match: RegExpExecArray | null;
 
     while ((match = urlRegex.exec(line)) !== null) {
       if (match.index > lastIndex) {
@@ -59,15 +72,24 @@ export function textToADF(text: string) {
         if (currentList) content.push(currentList);
         currentList = { type: 'bulletList', content: [] };
       }
-      currentList.content.push({ type: 'listItem', content: [{ type: 'paragraph', content: inlineContent.length ? inlineContent : [] }] });
+      currentList.content?.push({
+        type: 'listItem',
+        content: [{ type: 'paragraph', content: inlineContent.length ? inlineContent : [] }]
+      });
     } else if (isNumbered) {
       if (!currentList || currentList.type !== 'orderedList') {
         if (currentList) content.push(currentList);
         currentList = { type: 'orderedList', content: [] };
       }
-      currentList.content.push({ type: 'listItem', content: [{ type: 'paragraph', content: inlineContent.length ? inlineContent : [] }] });
+      currentList.content?.push({
+        type: 'listItem',
+        content: [{ type: 'paragraph', content: inlineContent.length ? inlineContent : [] }]
+      });
     } else {
-      if (currentList) { content.push(currentList); currentList = null; }
+      if (currentList) {
+        content.push(currentList);
+        currentList = null;
+      }
       content.push({ type: "paragraph", content: inlineContent.length ? inlineContent : [] });
     }
   }
@@ -76,22 +98,52 @@ export function textToADF(text: string) {
   return { type: "doc", version: 1, content: content.length > 0 ? content : [{ type: "paragraph", content: [] }] };
 }
 
-import { cacheUtils } from './cacheUtils';
+export interface JiraProject {
+  id: string;
+  key: string;
+  name: string;
+}
+
+export interface JiraUser {
+  id?: string;
+  key?: string;
+  name?: string;
+  accountId?: string;
+  displayName?: string;
+  emailAddress?: string;
+}
+
+export interface JiraIssueType {
+  id: string;
+  name: string;
+  subtask: boolean;
+}
 
 export interface JiraIssue {
   id: string;
   key: string;
   fields: {
     summary: string;
-    project: {
-      id: string;
-      key: string;
-    };
-    issuetype: {
-      id: string;
-      name: string;
-      subtask: boolean;
-    };
+    project: JiraProject;
+    issuetype: JiraIssueType;
+    [key: string]: unknown;
+  };
+}
+
+export interface JiraResource {
+  id: string;
+  name: string;
+  url: string;
+  scopes: string[];
+  avatarUrl?: string;
+}
+
+export interface JiraTransition {
+  id: string;
+  name: string;
+  to: {
+    name: string;
+    id: string;
   };
 }
 
@@ -102,7 +154,7 @@ export class JiraService {
     this.config = config;
   }
 
-  private get authHeader() {
+  private get authHeader(): string {
     if (this.config.authType === 'oauth' && this.config.accessToken) {
       return `Bearer ${this.config.accessToken}`;
     }
@@ -110,7 +162,7 @@ export class JiraService {
     return `Basic ${btoa(credentials)}`;
   }
 
-  private get apiBaseUrl() {
+  private get apiBaseUrl(): string {
     const apiBase = process.env.NEXT_PUBLIC_JIRA_API_BASE || "https://api.atlassian.com";
     const apiVersion = process.env.NEXT_PUBLIC_JIRA_API_VERSION || "3";
     
@@ -126,15 +178,15 @@ export class JiraService {
     return url;
   }
 
-  public getAuthHeader() {
+  public getAuthHeader(): string {
     return this.authHeader;
   }
 
-  public getApiBaseUrl() {
+  public getApiBaseUrl(): string {
     return this.apiBaseUrl;
   }
 
-  async getAccessibleResources(token: string) {
+  async getAccessibleResources(token: string): Promise<JiraResource[]> {
     const apiBase = process.env.NEXT_PUBLIC_JIRA_API_BASE || "https://api.atlassian.com";
     const response = await fetch(`${apiBase}/oauth/token/accessible-resources`, {
       headers: {
@@ -143,10 +195,10 @@ export class JiraService {
       },
     });
     if (!response.ok) throw new Error("Failed to fetch accessible resources");
-    return await response.json();
+    return await response.json() as JiraResource[];
   }
 
-  async refreshAccessToken() {
+  async refreshAccessToken(): Promise<{ access_token: string; refresh_token: string }> {
     if (!this.config.refreshToken) throw new Error("No refresh token available");
 
     const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
@@ -162,10 +214,10 @@ export class JiraService {
       throw new Error("Failed to refresh access token");
     }
 
-    return await response.json();
+    return await response.json() as { access_token: string; refresh_token: string };
   }
 
-  async testConnection() {
+  async testConnection(): Promise<JiraUser> {
     const response = await fetch(`${this.apiBaseUrl}/myself`, {
       headers: {
         Authorization: this.authHeader,
@@ -178,7 +230,7 @@ export class JiraService {
       throw new Error(`Connection failed: ${response.status} ${error}`);
     }
 
-    return await response.json();
+    return await response.json() as JiraUser;
   }
 
   async getIssue(issueKey: string): Promise<JiraIssue> {
@@ -194,15 +246,14 @@ export class JiraService {
       throw new Error(`Failed to fetch issue ${issueKey}: ${response.status} ${error}`);
     }
 
-    return await response.json();
+    return await response.json() as JiraIssue;
   }
 
-  async getProjectIssueTypes(projectId: string) {
+  async getProjectIssueTypes(projectId: string): Promise<JiraIssueType[]> {
     const CACHE_KEY = `jira_cache_issue_types_${projectId}`;
-    const cached = cacheUtils.get<any[]>(CACHE_KEY);
+    const cached = cacheUtils.get<JiraIssueType[]>(CACHE_KEY);
     if (cached) return cached;
 
-    // Note: This endpoint might vary depending on Jira version, but /issuetype/project is standard for Cloud
     const response = await fetch(`${this.apiBaseUrl}/issuetype/project?projectId=${projectId}`, {
       headers: {
         Authorization: this.authHeader,
@@ -210,18 +261,15 @@ export class JiraService {
       },
     });
     if (!response.ok) throw new Error(`Failed to fetch project issue types: ${response.status}`);
-    const data = await response.json();
+    const data = await response.json() as JiraIssueType[];
     cacheUtils.set(CACHE_KEY, data, 3600 * 24 * 7); // 7 days cache
     return data;
   }
 
-  async searchIssues(query: string, projectKey?: string): Promise<any[]> {
+  async searchIssues(query: string, projectKey?: string): Promise<unknown[]> {
     if (!query || query.length < 1) return [];
     
-    // Scoping to project if provided
     const jql = projectKey ? encodeURIComponent(`project = "${projectKey}"`) : "";
-    
-    // Using Issue Picker API for better search/autocomplete experience
     const response = await fetch(`${this.apiBaseUrl.replace('/rest/api/3', '/rest/api/3/issue/picker')}?query=${encodeURIComponent(query)}&currentJql=${jql}`, {
       headers: {
         Authorization: this.authHeader,
@@ -230,17 +278,17 @@ export class JiraService {
     });
 
     if (!response.ok) throw new Error(`Search failed: ${response.status}`);
-    const data = await response.json();
+    interface PickerResponse {
+      sections: { issues: unknown[] }[];
+    }
+    const data = await response.json() as PickerResponse;
     
-    // Issue Picker returns sections (usually "History Search" and "Current Search")
-    const allIssues = data.sections.reduce((acc: any[], section: any) => {
+    return data.sections.reduce((acc: unknown[], section) => {
       return [...acc, ...section.issues];
     }, []);
-    
-    return allIssues;
   }
 
-  async getMyself() {
+  async getMyself(): Promise<JiraUser> {
     const response = await fetch(`${this.apiBaseUrl}/myself`, {
       headers: {
         Authorization: this.authHeader,
@@ -249,36 +297,28 @@ export class JiraService {
     });
     if (!response.ok) {
       const err = new Error(`Jira API Error ${response.status}: Failed to get user profile`);
-      (err as any).status = response.status;
+      (err as unknown as { status: number }).status = response.status;
       throw err;
     }
-    return await response.json();
+    return await response.json() as JiraUser;
   }
 
-  async createSubtask(parentKey: string, summary: string, description?: string, dueDate?: string, startDate?: string, assigneeAccountId?: string) {
-    // 1. Get parent issue to find project
+  async createSubtask(parentKey: string, summary: string, description?: string, dueDate?: string, startDate?: string, assigneeAccountId?: string): Promise<JiraIssue> {
     const parent = await this.getIssue(parentKey);
     const projectId = parent.fields.project.id;
 
-    // 2. Find a valid subtask issue type for this project
     const issueTypes = await this.getProjectIssueTypes(projectId);
-    const subtaskType = issueTypes.find((it: any) => it.subtask === true);
+    const subtaskType = issueTypes.find(it => it.subtask === true);
 
     if (!subtaskType) {
       throw new Error("Could not find a valid Sub-task issue type in this project.");
     }
 
-    const fields: any = {
-      project: {
-        id: projectId,
-      },
-      parent: {
-        key: parentKey,
-      },
+    const fields: Record<string, unknown> = {
+      project: { id: projectId },
+      parent: { key: parentKey },
       summary: summary,
-      issuetype: {
-        id: subtaskType.id, // Use ID instead of hardcoded name
-      },
+      issuetype: { id: subtaskType.id },
     };
 
     if (description) {
@@ -298,7 +338,6 @@ export class JiraService {
       fields.assignee = { accountId: assigneeAccountId };
     }
 
-    // 3. Create subtask using the correct issue type ID
     const response = await fetch(`${this.apiBaseUrl}/issue`, {
       method: "POST",
       headers: {
@@ -306,9 +345,7 @@ export class JiraService {
         Accept: "application/json",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        fields: fields,
-      }),
+      body: JSON.stringify({ fields }),
     });
 
     if (!response.ok) {
@@ -316,11 +353,11 @@ export class JiraService {
       throw new Error(`Failed to create subtask: ${response.status} ${error}`);
     }
 
-    return await response.json();
+    return await response.json() as JiraIssue;
   }
 
-  async updateIssue(issueKey: string, summary?: string, dueDate?: string, startDate?: string, assigneeAccountId?: string, description?: string, storyPoints?: number, pointsFieldId?: string) {
-    const fields: any = {};
+  async updateIssue(issueKey: string, summary?: string, dueDate?: string, startDate?: string, assigneeAccountId?: string, description?: string, storyPoints?: number, pointsFieldId?: string): Promise<boolean> {
+    const fields: Record<string, unknown> = {};
     
     if (summary) {
       fields.summary = summary;
@@ -334,13 +371,11 @@ export class JiraService {
       fields.duedate = dueDate.split('T')[0];
     }
     
-    // Use configurable field ID for Start Date (default: customfield_10015)
     if (startDate) {
       const fieldId = process.env.NEXT_PUBLIC_JIRA_START_DATE_FIELD || "customfield_10015";
       fields[fieldId] = startDate.split('T')[0];
     }
 
-    // Use configurable field ID for Story Points (default: customfield_10016)
     if (storyPoints !== undefined) {
       const fieldId = pointsFieldId || process.env.NEXT_PUBLIC_JIRA_STORY_POINTS_FIELD || "customfield_10016";
       fields[fieldId] = storyPoints;
@@ -357,9 +392,7 @@ export class JiraService {
         Accept: "application/json",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        fields: fields,
-      }),
+      body: JSON.stringify({ fields }),
     });
 
     if (!response.ok) {
@@ -370,7 +403,7 @@ export class JiraService {
     return true;
   }
 
-  async getTransitions(issueKey: string): Promise<any[]> {
+  async getTransitions(issueKey: string): Promise<JiraTransition[]> {
     const response = await fetch(`${this.apiBaseUrl}/issue/${issueKey}/transitions`, {
       headers: {
         Authorization: this.authHeader,
@@ -379,18 +412,16 @@ export class JiraService {
     });
     if (!response.ok) {
       const err = new Error(`Jira API Error ${response.status}: Failed to fetch transitions`);
-      (err as any).status = response.status;
+      (err as unknown as { status: number }).status = response.status;
       throw err;
     }
-    const data = await response.json();
+    const data = await response.json() as { transitions: JiraTransition[] };
     return data.transitions || [];
   }
 
-  async transitionIssue(issueKey: string, transitionId: string, fields?: any) {
-    const body: any = {
-      transition: {
-        id: transitionId,
-      },
+  async transitionIssue(issueKey: string, transitionId: string, fields?: Record<string, unknown>): Promise<boolean> {
+    const body: Record<string, unknown> = {
+      transition: { id: transitionId },
     };
     
     if (fields && Object.keys(fields).length > 0) {
@@ -413,7 +444,7 @@ export class JiraService {
     return true;
   }
 
-  async findUsers(query: string): Promise<any[]> {
+  async findUsers(query: string): Promise<JiraUser[]> {
     const response = await fetch(`${this.apiBaseUrl}/user/search?query=${encodeURIComponent(query)}`, {
       headers: {
         Authorization: this.authHeader,
@@ -421,7 +452,7 @@ export class JiraService {
       },
     });
     if (!response.ok) return [];
-    return await response.json();
+    return await response.json() as JiraUser[];
   }
 
   async findStoryPointsField(): Promise<string | null> {
@@ -433,10 +464,13 @@ export class JiraService {
     });
     
     if (!response.ok) return null;
-    const fields = await response.json();
+    interface FieldResponse {
+      id: string;
+      name: string;
+    }
+    const fields = await response.json() as FieldResponse[];
     
-    // Look for common Story Point field names
-    const spField = fields.find((f: any) => 
+    const spField = fields.find(f => 
       f.name === "Story Points" || 
       f.name === "Story point estimate" ||
       f.name === "Points"
@@ -445,7 +479,7 @@ export class JiraService {
     return spField ? spField.id : null;
   }
 
-  async searchIssuesByJql(jql: string, fields: string[] = ['summary']): Promise<any> {
+  async searchIssuesByJql(jql: string, fields: string[] = ['summary']): Promise<{ issues: JiraIssue[] }> {
     const url = `${this.getApiBaseUrl()}/search/jql?jql=${encodeURIComponent(jql)}&fields=${fields.join(',')}`;
     const response = await fetch(url, {
       headers: {
@@ -459,6 +493,6 @@ export class JiraService {
       throw new Error(`Jira API Error ${response.status}: ${error}`);
     }
 
-    return response.json();
+    return await response.json() as { issues: JiraIssue[] };
   }
 }

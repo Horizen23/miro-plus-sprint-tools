@@ -26,7 +26,7 @@ export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = {
   jiraDomain: "",
   jiraPrefix: process.env.NEXT_PUBLIC_JIRA_PREFIX || "FTDGENERIC",
   jiraStoryPointsField: process.env.NEXT_PUBLIC_JIRA_STORY_POINTS_FIELD || "customfield_10016",
-  tsAutoFillDetailPatterns: "Code Review=รีวิวและตรวจสอบคุณภาพของ Source Code (Time Block 1: 10:50, 2: 15:00, 3: 16:40)\nDaily=อัปเดตสถานะงานประจำวันและอุปสรรคที่พบ (09:00 - 09:15)\nSprint Planning I=สรุปเป้าหมายและภาพรวมของ Sprint (ร่วมกับ PO)\nSprint Planning II=ทีมวางแผนงานเทคนิคและประเมินความซับซ้อนร่วมกัน\nSprint Refinement I=ทบทวนและลงรายละเอียดของงาน (ร่วมกับ PO)\nSprint Refinement II=ประเมินความยาก (Points) และสรุปความเข้าใจของงาน\nSprint Review=สรุปผลงานและ Demo สิ่งที่ทำเสร็จใน Sprint",
+  tsAutoFillDetailPatterns: "Code Review=รีวิวและตรวจสอบคุณภาพของ Source Code (Time Block 1: 10:50, 2: 15:00, 3: 16:40)\nDaily=อัปเดตสถานะงานประจำวันและอุปสรรคที่พบ (09:00 - 09:15)\nSprint Planning I=สรุปเป้าหมายและภาพรวมของ Sprint (ร่วมกับ PO)\nSprint Planning II=ทีมวางแผนงานเทคนิคและประเมินความซับซ้อนร่วมกัน\nSprint Refinement I=ทบทวนและลงรายละเอียดของงาน (ร่วมกับ PO)\nSprint Refinement II=ประเมินความยาก (Points) และสรุปความเข้าใจของงาน\nSprint Review=สรุปผลงานและ Demo สิ่งที่ทำเสร็จ in Sprint",
 };
 
 interface GlobalConfigContextType {
@@ -38,6 +38,18 @@ interface GlobalConfigContextType {
 
 const GlobalConfigContext = React.createContext<GlobalConfigContextType | undefined>(undefined);
 
+interface LegacyConfig {
+  project?: string;
+  defaultProject?: string;
+  variables?: string;
+  userMapping?: string;
+  meetingTag?: string;
+  meetingPattern?: string;
+  taskPattern?: string;
+  jiraPrefix?: string;
+  [key: string]: unknown;
+}
+
 export const GlobalConfigProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [config, setConfig] = React.useState<GlobalConfig>(DEFAULT_GLOBAL_CONFIG);
   const [boardId, setBoardId] = React.useState<string | null>(null);
@@ -46,28 +58,33 @@ export const GlobalConfigProvider: React.FC<{ children: React.ReactNode }> = ({ 
   React.useEffect(() => {
     const loadConfig = async () => {
       try {
-        // Fetch board info once
+        if (typeof miro === 'undefined') return;
+        
         const info = await miro.board.getInfo();
         setBoardId(info.id);
 
         const appDataKey = "globalConfig";
-        const saved = await (miro.board as any).getAppData(appDataKey);
+        const board = miro.board as unknown as { 
+          getAppData: (key: string) => Promise<Record<string, unknown> | undefined>,
+          setAppData: (key: string, data: unknown) => Promise<void>
+        };
+
+        const saved = await board.getAppData(appDataKey);
         if (saved) {
-          // Migration logic for key renaming
-          const data = { ...saved };
-          if ((data as any).cardPatterns && !data.tsAutoFillDetailPatterns) {
-            data.tsAutoFillDetailPatterns = (data as any).cardPatterns;
+          const data = { ...saved } as Record<string, unknown>;
+          // Migration logic
+          if (data['cardPatterns'] && !data['tsAutoFillDetailPatterns']) {
+            data['tsAutoFillDetailPatterns'] = data['cardPatterns'] as string;
           }
-          if ((data as any).tsCardPatterns && !data.tsAutoFillDetailPatterns) {
-            data.tsAutoFillDetailPatterns = (data as any).tsCardPatterns;
+          if (data['tsCardPatterns'] && !data['tsAutoFillDetailPatterns']) {
+            data['tsAutoFillDetailPatterns'] = data['tsCardPatterns'] as string;
           }
-          if ((data as any).tsCardDetailPatterns && !data.tsAutoFillDetailPatterns) {
-            data.tsAutoFillDetailPatterns = (data as any).tsCardDetailPatterns;
+          if (data['tsCardDetailPatterns'] && !data['tsAutoFillDetailPatterns']) {
+            data['tsAutoFillDetailPatterns'] = data['tsCardDetailPatterns'] as string;
           }
-          setConfig(prev => ({ ...prev, ...(data as object) }));
+          setConfig(prev => ({ ...prev, ...data } as GlobalConfig));
         } else {
-          // Migration from legacy timesheetConfig
-          const legacy = await (miro.board as any).getAppData("timesheetConfig");
+          const legacy = await board.getAppData("timesheetConfig") as unknown as LegacyConfig | undefined;
           if (legacy) {
             const migrated: GlobalConfig = {
               ...DEFAULT_GLOBAL_CONFIG,
@@ -81,10 +98,10 @@ export const GlobalConfigProvider: React.FC<{ children: React.ReactNode }> = ({ 
               jiraPrefix: legacy.jiraPrefix || DEFAULT_GLOBAL_CONFIG.jiraPrefix,
             };
             setConfig(migrated);
-            await (miro.board as any).setAppData(appDataKey, migrated);
+            await board.setAppData(appDataKey, migrated);
           }
         }
-      } catch (e) {
+      } catch (e: unknown) {
         console.error("Failed to load global config:", e);
       } finally {
         setIsLoading(false);
@@ -97,9 +114,14 @@ export const GlobalConfigProvider: React.FC<{ children: React.ReactNode }> = ({ 
     const updated = { ...config, ...newConfig };
     setConfig(updated);
     try {
-      await (miro.board as any).setAppData("globalConfig", updated);
+      if (typeof miro === 'undefined') return;
+      const board = miro.board as unknown as { 
+        setAppData: (key: string, data: unknown) => Promise<void>
+      };
+
+      await board.setAppData("globalConfig", updated);
       // Keep legacy for safety
-      await (miro.board as any).setAppData("timesheetConfig", {
+      await board.setAppData("timesheetConfig", {
         project: updated.tsProject,
         defaultProject: updated.tsDefaultProject,
         variables: updated.tsVariables,
@@ -110,7 +132,7 @@ export const GlobalConfigProvider: React.FC<{ children: React.ReactNode }> = ({ 
         jiraPrefix: updated.jiraPrefix,
         jiraStoryPointsField: updated.jiraStoryPointsField,
       });
-    } catch (e) {
+    } catch (e: unknown) {
       console.error("Failed to save global config:", e);
     }
   };

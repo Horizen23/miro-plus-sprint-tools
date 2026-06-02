@@ -1,7 +1,8 @@
 import * as React from "react";
+import type { Card, AppCard, Item, Tag } from "@mirohq/websdk-types";
 import { useGlobalConfig } from "../contexts/GlobalConfigContext";
-import { parseUserMapping } from "../utils/mappingUtils";
-import { parseCardTitle, calculateSelectionSummary } from "../utils/estimationUtils";
+import { calculateSelectionSummary } from "../services/miro/estimationUtils";
+import { cacheUtils } from "../utils/cacheUtils";
 
 export interface SelectedCard {
   id: string;
@@ -17,7 +18,7 @@ export interface SelectedCard {
   lastSyncedDesc?: string;
   actualHours: number;
   actualPoints: number;
-  fields?: any[];
+  fields?: unknown[];
   x: number;
   y: number;
 }
@@ -31,7 +32,7 @@ const RE_TAGS = /<[^>]*>/g;
 const RE_EMPTY_LI = /\n-\s*(?=\n|$)/g;
 const RE_MULTI_NEWLINE = /\n+/g;
 
-const htmlToPlainText = (html?: string) => {
+const htmlToPlainText = (html?: string): string => {
   if (!html) return "";
   let text = html;
   text = text.replace(RE_BR, '\n');
@@ -44,24 +45,32 @@ const htmlToPlainText = (html?: string) => {
   return text.trim();
 };
 
-export function useJiraDetection(selection: any[], appParentKey: string) {
+export interface UseJiraDetectionReturn {
+  selectedCards: SelectedCard[];
+  checkedIds: Set<string>;
+  setCheckedIds: React.Dispatch<React.SetStateAction<Set<string>>>;
+  detectSelection: () => Promise<void>;
+  toggleCheck: (cardId: string) => void;
+  handleSelectAll: () => void;
+  validItemsCount: number;
+  clearCache: () => void;
+}
+
+export function useJiraDetection(selection: Item[], appParentKey: string): UseJiraDetectionReturn {
   const { config: globalConfig } = useGlobalConfig();
   const [selectedCards, setSelectedCards] = React.useState<SelectedCard[]>([]);
   const [checkedIds, setCheckedIds] = React.useState<Set<string>>(new Set());
   
-  // Computational Cache to store results of expensive string operations
-  const parseCache = React.useRef<Record<string, { title: string, desc: string, parsed: any }>>({});
   const lastSelectedIds = React.useRef<Set<string>>(new Set());
 
   const clearCache = React.useCallback(() => {
-    parseCache.current = {};
     lastSelectedIds.current = new Set();
   }, []);
 
-  const normalize = (text?: string) => {
+  const normalize = (text?: string): string => {
     if (!text) return "";
     const jiraStampRegex = /---(?:\s|<[^>]+>)*Jira/i;
-    let clean = text.split(jiraStampRegex)[0];
+    const clean = text.split(jiraStampRegex)[0] || "";
     return clean
       .replace(/<br\s*\/?>|<\/p>|<\/div>|<\/li>/gi, ' ')
       .replace(/<[^>]*>/g, ' ')
@@ -77,23 +86,25 @@ export function useJiraDetection(selection: any[], appParentKey: string) {
 
   const detectSelection = React.useCallback(async () => {
     try {
-      // 1. Get Tags with a simple 5-second cache to avoid redundant SDK calls
-      const CACHE_KEY = 'miro_tags_cache';
-      const CACHE_TIME = 30 * 1000; // 30 seconds instead of 1 day
-      let tags = (window as any)[CACHE_KEY]?.data;
-      const lastFetch = (window as any)[CACHE_KEY]?.timestamp || 0;
+      if (typeof miro === 'undefined') return;
 
-      if (!tags || Date.now() - lastFetch > CACHE_TIME) {
-        tags = await miro.board.get({ type: 'tag' });
-        (window as any)[CACHE_KEY] = { data: tags, timestamp: Date.now() };
+      const CACHE_KEY = 'miro_tags_cache';
+      const CACHE_TIME = 3600;
+      
+      let allTags = cacheUtils.get<Tag[]>(CACHE_KEY);
+
+      if (!allTags) {
+        allTags = await miro.board.get({ type: 'tag' });
+        cacheUtils.set(CACHE_KEY, allTags, CACHE_TIME);
       }
 
-      const tagMap = new Map(tags.map((t: any) => [t.id, t.title]));
+      if (!allTags) return;
+
+      const tagMap = new Map(allTags.map((t) => [t.id, t.title]));
       const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
 
-      // Optimization: Fetch all metadata in parallel before the loop
       const metadataResults = await Promise.all(
-        selection.map(item => (item as any).getMetadata ? (item as any).getMetadata(metadataKey) : null)
+        selection.map(item => (item as Card | AppCard).getMetadata ? (item as Card | AppCard).getMetadata(metadataKey) : null)
       );
 
       const items: SelectedCard[] = [];
@@ -102,48 +113,52 @@ export function useJiraDetection(selection: any[], appParentKey: string) {
         const item = selection[i];
         if (item.type !== 'card' && item.type !== 'app_card') continue;
         
-        const itemAny = item as any;
-        const syncedInfo = metadataResults[i];
+        const card = item as Card | AppCard;
+        const syncedInfo = metadataResults[i] as { key?: string, lastTitle?: string, lastDesc?: string } | null;
         
-        const cardTagTitles = (itemAny.tagIds || [])
-          .map((id: string) => tagMap.get(id))
-          .filter(Boolean) as string[];
+        const tagIds = (card as unknown as { tagIds?: string[] }).tagIds || [];
+        const cardTagTitles = tagIds
+          .map((id) => tagMap.get(id))
+          .filter((title): title is string => !!title);
+
         const jiraTagTitle = cardTagTitles.find(title => title.toLowerCase().startsWith('jira-'));
         
-        let detectedParentKey = undefined;
+        let detectedParentKey: string | undefined = undefined;
         if (jiraTagTitle) {
           const tagValue = jiraTagTitle.split('-').slice(1).join('-').toUpperCase();
           const prefix = globalConfig?.jiraPrefix || "FTDGENERIC";
           detectedParentKey = tagValue.includes('-') ? tagValue : `${prefix}-${tagValue}`;
         }
 
-        let cleanDescRaw = itemAny.description || "";
-        // Much safer regex: Look for --- followed by any tags/spaces and then Jira
+        let cleanDescRaw = card.description || "";
         const jiraStampRegex = /---(?:\s|<[^>]+>)*Jira/i;
-        cleanDescRaw = cleanDescRaw.split(jiraStampRegex)[0].replace(/(<p[^>]*>|<br\s*\/?>|\s)*$/, '');
+        cleanDescRaw = cleanDescRaw.split(jiraStampRegex)[0] || "";
+        cleanDescRaw = cleanDescRaw.replace(/(<p[^>]*>|<br\s*\/?>|\s)*$/, '');
 
-        // 6. Calculate Estimate using central logic during detection
         const cleanDesc = htmlToPlainText(cleanDescRaw);
-        const cardSummary = calculateSelectionSummary([itemAny]);
+        const cardSummary = calculateSelectionSummary([card]);
+
+        const cardX = (card as unknown as { x: number }).x ?? 0;
+        const cardY = (card as unknown as { y: number }).y ?? 0;
 
         items.push({
           id: item.id, type: item.type,
-          title: itemAny.title || "",
+          title: card.title || "",
           description: cleanDesc,
           actualHours: cardSummary.actualHours,
           actualPoints: cardSummary.points,
-          fields: itemAny.fields,
-          startDate: itemAny.startDate,
-          dueDate: itemAny.dueDate,
-          assigneeId: itemAny.assignee?.userId,
+          fields: (card as AppCard).fields,
+          startDate: (card as Card).startDate,
+          dueDate: (card as Card).dueDate,
+          assigneeId: (card as Card).assignee?.userId,
           detectedParentKey,
           syncedKey: syncedInfo?.key,
           lastSyncedTitle: syncedInfo?.lastTitle,
           lastSyncedDesc: syncedInfo?.lastDesc,
-          x: itemAny.x, y: itemAny.y
+          x: cardX, y: cardY
         });
       }
-      // Smart Auto-check logic: only for NEWLY added items that are valid/changed
+
       setCheckedIds(prev => {
         const next = new Set(prev);
         items.forEach(item => {
@@ -161,7 +176,6 @@ export function useJiraDetection(selection: any[], appParentKey: string) {
           }
         });
         
-        // Clean up: remove IDs that are no longer in the selection
         const currentIds = new Set(items.map(i => i.id));
         const finalNext = new Set<string>();
         next.forEach(id => {
@@ -173,7 +187,7 @@ export function useJiraDetection(selection: any[], appParentKey: string) {
       });
 
       setSelectedCards(items);
-    } catch (e) {
+    } catch (e: unknown) {
       console.error("[useJiraDetection] Error:", e);
     }
   }, [selection, globalConfig?.jiraPrefix, appParentKey]);
@@ -182,7 +196,7 @@ export function useJiraDetection(selection: any[], appParentKey: string) {
     detectSelection();
   }, [selectionIds, detectSelection]);
 
-  const toggleCheck = (cardId: string) => {
+  const toggleCheck = React.useCallback((cardId: string) => {
     const card = selectedCards.find(c => c.id === cardId);
     if (!card) return;
     
@@ -196,9 +210,9 @@ export function useJiraDetection(selection: any[], appParentKey: string) {
       else next.add(cardId);
       return next;
     });
-  };
+  }, [selectedCards, appParentKey]);
 
-  const handleSelectAll = () => {
+  const handleSelectAll = React.useCallback(() => {
     const validIds = selectedCards
       .filter(c => !!(appParentKey || c.detectedParentKey) || !!c.syncedKey)
       .map(c => c.id);
@@ -208,7 +222,7 @@ export function useJiraDetection(selection: any[], appParentKey: string) {
     } else {
       setCheckedIds(new Set(validIds));
     }
-  };
+  }, [selectedCards, checkedIds, appParentKey]);
 
   const validItemsCount = React.useMemo(() => 
     selectedCards.filter(c => !!(appParentKey || c.detectedParentKey) || !!c.syncedKey).length,

@@ -1,3 +1,5 @@
+import type { UserInfo } from "@mirohq/websdk-types";
+
 /**
  * Internal helper to get relevant tags by filtering out those matching ignoreRegex
  */
@@ -7,7 +9,7 @@ function getRelevantTags(cardTags: string[], ignoreRegex?: string): string[] {
     const metadataRe = new RegExp(ignoreRegex, 'i');
     return cardTags.filter(t => !metadataRe.test(t));
   } catch (e) {
-    console.warn(`[mappingUtils] Invalid ignoreRegex: ${ignoreRegex}`);
+    console.warn(`[mappingUtils] Invalid ignoreRegex: ${ignoreRegex}`, e);
     return cardTags;
   }
 }
@@ -41,14 +43,17 @@ export function parseUserMapping(mappingStr: string = ""): Map<string, string> {
 export function isUserOwnerOfCard(
   cardTags: string[], 
   mapping: Map<string, string>, 
-  userInfo: any,
+  userInfo: UserInfo | null | undefined,
   ignoreRegex?: string
 ): boolean {
   if (!userInfo) return false;
 
   const myId = userInfo.id;
   const myName = userInfo.name?.toLowerCase();
-  const myEmail = (userInfo as any).email?.toLowerCase();
+  
+  // Safe extraction of email from unknown UserInfo
+  const myEmail = (userInfo as Record<string, unknown>).email as string | undefined;
+  const lowerEmail = myEmail?.toLowerCase();
 
   const relevantTags = getRelevantTags(cardTags, ignoreRegex);
 
@@ -57,7 +62,7 @@ export function isUserOwnerOfCard(
     const mappedVal = mapping.get(lowerTag);
     if (mappedVal) {
       const lowerVal = mappedVal.toLowerCase();
-      if (myEmail && lowerVal === myEmail) return true;
+      if (lowerEmail && lowerVal === lowerEmail) return true;
       if (myName && lowerVal === myName) return true;
       if (lowerVal === myId) return true;
     }

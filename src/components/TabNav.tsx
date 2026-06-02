@@ -1,7 +1,7 @@
 import * as React from "react";
 
 export interface TabItem {
-  id: any;
+  id: string;
   label: string;
   icon: React.ReactNode;
   badge?: boolean;
@@ -10,7 +10,7 @@ export interface TabItem {
 interface TabNavProps {
   tabs: TabItem[];
   activeTab: string;
-  onTabChange: (id: any) => void;
+  onTabChange: (id: string) => void;
 }
 
 export const TabNav: React.FC<TabNavProps> = ({ tabs, activeTab, onTabChange }) => {

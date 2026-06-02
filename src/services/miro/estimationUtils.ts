@@ -1,19 +1,21 @@
 import type { Card, AppCard } from "@mirohq/websdk-types";
 
 // Pre-parse mappings once at the top level to avoid repeated split/map/Number calls
-const HOURS_TO_POINTS_PAIRS = (process.env.NEXT_PUBLIC_HOURS_TO_POINTS_MAPPING || "2:2,4:3,6:5,10:8,16:13,26:21,42:34,68:55,109:89,175:144,283:233,458:377")
+const HOURS_TO_POINTS_PAIRS: number[][] = (process.env.NEXT_PUBLIC_HOURS_TO_POINTS_MAPPING || "2:2,4:3,6:5,10:8,16:13,26:21,42:34,68:55,109:89,175:144,283:233,458:377")
   .split(',')
   .map(p => p.split(':').map(Number));
 
-const FIBONACCI_SCALE = (process.env.NEXT_PUBLIC_FIBONACCI_SCALE || "0,1,2,3,5,8,13,21,34,55,89,144,233,377")
+const FIBONACCI_SCALE: number[] = (process.env.NEXT_PUBLIC_FIBONACCI_SCALE || "0,1,2,3,5,8,13,21,34,55,89,144,233,377")
   .split(',')
   .map(Number)
   .sort((a, b) => b - a);
 
 export const mapHoursToPoints = (h: number): number => {
   if (h <= 0) return 0;
-  for (const [hourLimit, points] of HOURS_TO_POINTS_PAIRS) {
-    if (h <= hourLimit) return points;
+  for (const pair of HOURS_TO_POINTS_PAIRS) {
+    const hourLimit = pair[0];
+    const points = pair[1];
+    if (hourLimit !== undefined && points !== undefined && h <= hourLimit) return points;
   }
   return 0;
 };
@@ -21,11 +23,15 @@ export const mapHoursToPoints = (h: number): number => {
 export const mapPointsToHours = (p: number): [number, number] => {
   if (p <= 0) return [0, 0];
   let lowerLimit = 0;
-  for (const [hourLimit, points] of HOURS_TO_POINTS_PAIRS) {
-    if (p <= points) {
-      return [lowerLimit + 1, hourLimit];
+  for (const pair of HOURS_TO_POINTS_PAIRS) {
+    const hourLimit = pair[0];
+    const points = pair[1];
+    if (hourLimit !== undefined && points !== undefined) {
+      if (p <= points) {
+        return [lowerLimit + 1, hourLimit];
+      }
+      lowerLimit = hourLimit;
     }
-    lowerLimit = hourLimit;
   }
   return [0, 0];
 };
@@ -34,7 +40,7 @@ export const getBucketedPoint = (sum: number): number => {
   for (const f of FIBONACCI_SCALE) {
     if (sum >= f) return f;
   }
-  return sum > 0 ? FIBONACCI_SCALE[FIBONACCI_SCALE.length - 1] : 0;
+  return sum > 0 ? (FIBONACCI_SCALE[FIBONACCI_SCALE.length - 1] ?? 0) : 0;
 };
 
 export interface CardTitleData {
@@ -68,6 +74,7 @@ export const parseCardTitle = (title: string): CardTitleData => {
     .replace(RE_AMP, '&')
     .replace(RE_LT, '<')
     .replace(RE_GT, '>')
+    .replace(/\s+/g, ' ')
     .trim();
 
   // Aggressive cleaning loop: Strip any leading [tags] that might be duplicated
@@ -107,7 +114,7 @@ export const parseCardTitle = (title: string): CardTitleData => {
  * 3. Test tasks (starting with 'T')
  */
 export const compareSequences = (seqA: string | null, seqB: string | null): number => {
-  const getCategory = (s: string | null) => {
+  const getCategory = (s: string | null): number => {
     if (!s || s.trim() === "") return 2; // No Seq / Empty
     if (s.toUpperCase().startsWith('T')) return 3; // Test
     return 1; // Dev
@@ -140,7 +147,7 @@ export const incrementSequence = (seq: string | null): string => {
   if (!match) return seq; // Fallback if no numbers found
 
   const prefix = match[1] || "";
-  const major = parseInt(match[2], 10);
+  const major = parseInt(match[2] || "0", 10);
   const minorStr = match[3];
 
   if (minorStr !== undefined) {
@@ -157,35 +164,48 @@ export const incrementSequence = (seq: string | null): string => {
  * Formats components into a standardized card title.
  */
 export const formatCardTitle = (data: CardTitleData): string => {
-  const seqPart = data.seq !== null ? `[${data.seq}]` : "";
+  const seqPart = data.seq ? `[${data.seq}]` : "";
   const estPart = data.estimate ? `[${data.estimate}]` : "";
   
   // Format as [SEQ][EST] Title
   return `${seqPart}${estPart} ${data.cleanTitle}`.trim();
 };
 
-export const handleSetPointsOnItems = async (items: (Card | AppCard)[], points: string) => {
+export const handleSetPointsOnItems = async (items: (Card | AppCard)[], points: string): Promise<void> => {
   if (items.length === 0) return;
+  if (typeof miro === 'undefined') return;
+
   const itemIds = items.map(i => i.id);
 
   try {
-    const freshItems = await miro.board.get({ id: itemIds }) as any[];
+    const freshItems = await miro.board.get({ id: itemIds });
     await Promise.all(freshItems.map(async (freshItem) => {
-      const { seq, cleanTitle } = parseCardTitle(freshItem.title || "");
-      freshItem.title = formatCardTitle({
-        seq, 
-        estimate: points === '?' ? '?' : points,
-        cleanTitle
-      });
-      return freshItem.sync();
+      if (freshItem.type === 'card' || freshItem.type === 'app_card') {
+        const c = freshItem as Card | AppCard;
+        const { seq, cleanTitle } = parseCardTitle(c.title || "");
+        c.title = formatCardTitle({
+          seq, 
+          estimate: points === '?' ? '?' : points,
+          cleanTitle
+        });
+        return c.sync();
+      }
     }));
-  } catch (e) {
+  } catch (e: unknown) {
     console.error("[DEBUG] Batch Sync failed:", e);
     throw e;
   }
 };
 
-export const calculateSelectionSummary = (items: (Card | AppCard)[]) => {
+export interface SelectionSummary {
+  count: number;
+  points: number;
+  bucketedPoint: number;
+  hourRange: [number, number];
+  actualHours: number;
+}
+
+export const calculateSelectionSummary = (items: (Card | AppCard)[]): SelectionSummary => {
   let actualPointsSum = 0;
   let actualHoursSum = 0;
 
@@ -195,8 +215,8 @@ export const calculateSelectionSummary = (items: (Card | AppCard)[]) => {
     let found = false;
 
     // 1. Check App Card Fields first
-    if (item.type === 'app_card' && (item as any).fields && (item as any).fields.length > 0) {
-      (item as any).fields.forEach((field: any) => {
+    if (item.type === 'app_card' && item.fields && item.fields.length > 0) {
+      item.fields.forEach((field) => {
         if (field.value) {
           const val = parseFloat(field.value);
           if (!isNaN(val)) {

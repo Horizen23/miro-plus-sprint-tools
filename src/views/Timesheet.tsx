@@ -1,22 +1,20 @@
 import * as React from "react";
-import type { Card, AppCard, UserInfo } from "@mirohq/websdk-types";
-import { parseCardTitle } from "../utils/estimationUtils";
+import type { Card, AppCard, UserInfo, Tag } from "@mirohq/websdk-types";
+import { parseCardTitle } from "../services/miro/estimationUtils";
 import { SectionHeader } from "../components/SectionHeader";
 import { SummaryCard, SummaryDivider } from "../components/SummaryCard";
 import { Button } from "../components/Button";
 import { InputField } from "../components/InputField";
 import { ListItem } from "../components/ListItem";
 import { useGlobalConfig, GlobalConfig as TimesheetConfig } from "../contexts/GlobalConfigContext";
-import { parseUserMapping, isUserOwnerOfCard, getCardMappedUser } from "../utils/mappingUtils";
+import { parseUserMapping, isUserOwnerOfCard, getCardMappedUser } from "../services/jira/mappingUtils";
 import { cacheUtils } from "../utils/cacheUtils";
-import { notify, copyAndNotify } from "../utils/uiUtils";
+import { notify, copyAndNotify } from "../services/miro/uiUtils";
 import { useDebounce } from "../hooks/useDebounce";
+import { usePanel } from "@/contexts/PanelContext";
 
-interface TimesheetProps {
-  items: (Card | AppCard)[];
-}
-
-export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
+export const Timesheet: React.FC = () => {
+  const { selectedItems: items } = usePanel();
   const { config, boardId, isLoading } = useGlobalConfig();
   const [timesheet, setTimesheet] = React.useState<Record<string, { title: string, cardId: string }[]>>({});
   const [filterOnlyMe, setFilterOnlyMe] = React.useState(false);
@@ -26,7 +24,7 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
   const [showConfig, setShowConfig] = React.useState(false);
   const [copying, setCopying] = React.useState(false);
   const [userInfo, setUserInfo] = React.useState<UserInfo | null>(null);
-  const [allTags, setAllTags] = React.useState<any[]>([]);
+  const [allTags, setAllTags] = React.useState<Tag[]>([]);
 
   React.useEffect(() => {
     const loadState = async () => {
@@ -35,23 +33,29 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
         let info = cacheUtils.get<UserInfo>(USER_INFO_CACHE_KEY);
         
         if (!info) {
-          info = await miro.board.getUserInfo();
-          cacheUtils.set(USER_INFO_CACHE_KEY, info, 3600 * 24 * 7); // 7 days cache
+          if (typeof miro !== 'undefined') {
+            info = await miro.board.getUserInfo();
+            cacheUtils.set(USER_INFO_CACHE_KEY, info, 3600 * 24 * 7); // 7 days cache
+          }
         }
         setUserInfo(info);
-      } catch (e) {}
+      } catch (e: unknown) {
+        console.warn("[Timesheet] Failed to load user info:", e);
+      }
 
       try {
-        if (!boardId) return;
+        if (!boardId || typeof miro === 'undefined') return;
         const CACHE_KEY = `miro_cache_tags_${boardId}`;
-        let tags = cacheUtils.get<any[]>(CACHE_KEY);
+        let tags = cacheUtils.get<Tag[]>(CACHE_KEY);
         
         if (!tags) {
           tags = await miro.board.get({ type: "tag" });
           cacheUtils.set(CACHE_KEY, tags, 3600 * 24); // 1 day cache
         }
         setAllTags(tags);
-      } catch (e) {}
+      } catch (e: unknown) {
+        console.warn("[Timesheet] Failed to load tags:", e);
+      }
 
       // Load Personal Config (LocalStorage)
       const localOnlyMe = localStorage.getItem('miro_timesheet_only_me');
@@ -72,7 +76,7 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
       }
     };
     loadState();
-  }, []);
+  }, [boardId]);
 
   const updatePersonalOnlyMe = (val: boolean) => {
     setFilterOnlyMe(val);
@@ -94,7 +98,15 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
     localStorage.setItem('miro_timesheet_exclude_title', val);
   };
 
-  const generateTimesheet = React.useCallback(async (cards: (Card | AppCard)[], currentConfig: TimesheetConfig, onlyMe: boolean, currentFilterTag: string, includeUnassigned: boolean, currentExcludeTitle: string, tags: any[]) => {
+  const generateTimesheet = React.useCallback(async (
+    cards: (Card | AppCard)[], 
+    currentConfig: TimesheetConfig, 
+    onlyMe: boolean, 
+    currentFilterTag: string, 
+    includeUnassigned: boolean, 
+    currentExcludeTitle: string, 
+    tags: Tag[]
+  ): Promise<Record<string, { title: string, cardId: string }[]>> => {
     const grouped: Record<string, { title: string, cardId: string }[]> = {};
     const tagMap = new Map(tags.map(t => [t.id, t.title]));
 
@@ -117,7 +129,7 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
         const regexStr = line.substring(splitIdx + 1).trim();
         try {
           return { name, re: new RegExp(regexStr, 'i') };
-        } catch (e) {
+        } catch (e: unknown) {
           return null;
         }
       })
@@ -126,29 +138,30 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
     // 3. Pre-process Filters
     let excludeRe: RegExp | null = null;
     if (currentExcludeTitle) {
-      try { excludeRe = new RegExp(currentExcludeTitle, "i"); } catch (e) {}
+      try { excludeRe = new RegExp(currentExcludeTitle, "i"); } catch (e: unknown) {}
     }
     let filterRe: RegExp | null = null;
     if (currentFilterTag) {
-      try { filterRe = new RegExp(currentFilterTag, "i"); } catch (e) {}
+      try { filterRe = new RegExp(currentFilterTag, "i"); } catch (e: unknown) {}
     }
     
     let meetingRe: RegExp | null = null;
-    try { meetingRe = new RegExp(currentConfig.tsMeetingTag, "i"); } catch (e) {}
+    try { meetingRe = new RegExp(currentConfig.tsMeetingTag, "i"); } catch (e: unknown) {}
 
     for (const card of cards) {
       if (card.type !== "card" && card.type !== "app_card") continue;
       
-      const c = card as any;
+      const c = card as Card;
       if (!c.startDate && !c.dueDate) continue;
 
       // 4. Filter by Exclude Title
       if (excludeRe && excludeRe.test(c.title || "")) continue;
       if (!excludeRe && currentExcludeTitle && (c.title || "").toLowerCase().includes(currentExcludeTitle.toLowerCase())) continue;
 
-      const cardTags = (c.tagIds || [])
-        .map((tagId: string) => tagMap.get(tagId))
-        .filter(Boolean) as string[];
+      const tagIds = (c as unknown as { tagIds?: string[] }).tagIds || [];
+      const cardTags = tagIds
+        .map((tagId) => tagMap.get(tagId))
+        .filter((title): title is string => !!title);
 
       // 5. Filter by Tag
       if (filterRe && !cardTags.some(t => filterRe!.test(t))) continue;
@@ -190,7 +203,7 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
             const m = t.match(tagRe);
             if (m) { cardTagValue = m[1] || m[0]; break; }
           }
-        } catch(e) {}
+        } catch(e: unknown) {}
       }
       if (cardTagValue && currentConfig.jiraPrefix) {
         baseVars.key = `${currentConfig.jiraPrefix}-${cardTagValue}`;
@@ -219,13 +232,19 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
           autoDetail = match.description;
         }
       }
-
+      
       baseVars.title = cleanDisplayTitle;
       baseVars.estimate = estimate;
       baseVars.description = autoDetail || c.description || "";
+      const isAutoFillDetail  = Boolean(autoDetail);
 
-      const start = new Date(c.startDate || c.dueDate);
-      const end = new Date(c.dueDate || c.startDate);
+      const startDateStr = c.startDate || c.dueDate;
+      const dueDateStr = c.dueDate || c.startDate;
+      
+      if (!startDateStr || !dueDateStr) continue;
+
+      const start = new Date(startDateStr);
+      const end = new Date(dueDateStr);
       const current = new Date(start.getFullYear(), start.getMonth(), start.getDate());
       const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
 
@@ -234,12 +253,12 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
         : cardTags.some(t => t.toLowerCase().includes(currentConfig.tsMeetingTag.toLowerCase())))
         || (c.title || "").toLowerCase().includes("meeting");
 
-      // Force include description if it's not in the saved pattern yet
       let pattern = isMeeting ? currentConfig.tsMeetingPattern : currentConfig.tsTaskPattern;
-      if (pattern && !pattern.includes('{description}')) {
-        pattern = pattern + " - {description}";
+
+      if (isAutoFillDetail && pattern && !pattern.includes('{description}')) {
+        pattern += " - {description}";
       }
-      
+
       let finalTitle = `${currentConfig.tsProject}${pattern}`;
       Object.entries(baseVars).forEach(([name, val]) => {
         finalTitle = finalTitle.replace(new RegExp(`{${name}}`, 'g'), val || "");
@@ -325,9 +344,11 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
 
   const zoomToCard = React.useCallback(async (id: string) => {
     try {
-      await miro.board.viewport.zoomTo(await miro.board.get({ id }));
-      await miro.board.select({ id });
-    } catch (e) {}
+      if (typeof miro !== 'undefined') {
+        await miro.board.viewport.zoomTo(await miro.board.get({ id }));
+        await miro.board.select({ id });
+      }
+    } catch (e: unknown) {}
   }, []);
 
   const renderedTimesheet = React.useMemo(() => (
@@ -395,26 +416,26 @@ export const Timesheet: React.FC<TimesheetProps> = ({ items }) => {
               <InputField 
                 placeholder="Filter by Tag (e.g. Sprint-21)"
                 value={filterTag}
-                onChange={(e: any) => updatePersonalTag(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => updatePersonalTag(e.target.value)}
               />
               <InputField 
                 placeholder="Exclude Title (e.g. Holiday|Leave)"
                 value={excludeTitle}
-                onChange={(e: any) => updatePersonalExcludeTitle(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => updatePersonalExcludeTitle(e.target.value)}
               />
               <div style={{ marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <InputField 
                   type="checkbox"
                   label="Show only my tasks (Only Me)"
                   checked={Boolean(filterOnlyMe)}
-                  onChange={(e: any) => updatePersonalOnlyMe(e.target.checked)}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => updatePersonalOnlyMe((e.target as HTMLInputElement).checked)}
                   style={{ width: '15px', height: '15px', cursor: 'pointer' }}
                 />
                 <InputField 
                   type="checkbox"
                   label="Include unassigned tasks"
                   checked={Boolean(includeUnassigned)}
-                  onChange={(e: any) => updatePersonalUnassigned(e.target.checked)}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => updatePersonalUnassigned((e.target as HTMLInputElement).checked)}
                   style={{ width: '15px', height: '15px', cursor: 'pointer' }}
                 />
               </div>

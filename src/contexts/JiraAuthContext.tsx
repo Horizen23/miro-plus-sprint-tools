@@ -1,12 +1,12 @@
 'use client';
 import * as React from "react";
-import { JiraConfig, JiraService } from "../utils/jiraService";
+import { JiraConfig, JiraService, JiraResource } from "../services/jira/JiraService";
 import { RealtimeFactory } from "../services/realtime/factory";
 
 const CLIENT_ID = process.env.NEXT_PUBLIC_JIRA_CLIENT_ID || "";
 const realtimeService = RealtimeFactory.getInstance();
 
-const getRedirectUri = () => {
+const getRedirectUri = (): string => {
   if (typeof window === 'undefined') return '';
   if (process.env.NEXT_PUBLIC_JIRA_REDIRECT_URI) return process.env.NEXT_PUBLIC_JIRA_REDIRECT_URI;
   return window.location.origin + window.location.pathname;
@@ -16,20 +16,24 @@ interface JiraAuthContextValue {
   config: JiraConfig;
   setConfig: React.Dispatch<React.SetStateAction<JiraConfig>>;
   isAuthenticating: boolean;
-  availableResources: any[];
+  availableResources: JiraResource[];
   startOAuth: () => void;
-  selectResource: (resource: any) => void;
+  selectResource: (resource: JiraResource) => void;
   logout: () => void;
 }
 
 const JiraAuthContext = React.createContext<JiraAuthContextValue | undefined>(undefined);
 
+interface PendingAuthData {
+  accessToken: string;
+  refreshToken: string;
+}
+
 export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [config, setConfig] = React.useState<JiraConfig>({ authType: 'oauth' });
   const [isAuthenticating, setIsAuthenticating] = React.useState(false);
-  const [availableResources, setAvailableResources] = React.useState<any[]>([]);
-  const [isLoaded, setIsLoaded] = React.useState(false);
-  const [pendingAuthData, setPendingAuthData] = React.useState<any>(null);
+  const [availableResources, setAvailableResources] = React.useState<JiraResource[]>([]);
+  const [pendingAuthData, setPendingAuthData] = React.useState<PendingAuthData | null>(null);
 
   // Load config on mount
   React.useEffect(() => {
@@ -37,14 +41,12 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const saved = localStorage.getItem(configKey);
     if (saved) {
       try {
-        setConfig(JSON.parse(saved));
-      } catch (e) {}
+        setConfig(JSON.parse(saved) as JiraConfig);
+      } catch (e: unknown) {}
     }
-    setIsLoaded(true);
   }, []);
 
   const handleTokenExchange = async (code: string) => {
-    console.log("[JiraAuth] Starting token exchange for code:", code.substring(0, 10) + "...");
     setIsAuthenticating(true);
     try {
       const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
@@ -58,19 +60,14 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       });
 
       if (!resp.ok) {
-        const errText = await resp.text();
-        console.error("[JiraAuth] Token exchange failed:", errText);
         throw new Error("Failed to exchange token");
       }
 
-      const data = await resp.json();
-      console.log("[JiraAuth] Token exchange successful!");
+      const data = await resp.json() as { access_token: string, refresh_token: string };
       
       const svc = new JiraService({ ...config, authType: 'oauth', accessToken: data.access_token });
       const res = await svc.getAccessibleResources(data.access_token);
       if (res && res.length > 0) {
-        console.log("[JiraAuth] Found accessible resources:", res.length);
-        
         if (res.length === 1) {
           const newCfg: JiraConfig = { 
             ...config, 
@@ -92,7 +89,7 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           });
         }
       }
-    } catch (e) { 
+    } catch (e: unknown) { 
       console.error("[JiraAuth] Error in handleTokenExchange:", e); 
     } finally { 
       setIsAuthenticating(false); 
@@ -102,6 +99,8 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const authUnsubRef = React.useRef<(() => void) | null>(null);
 
   React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
 
@@ -111,11 +110,8 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     let unsubAuth: (() => void) | undefined;
     
     if (currentState && !code) {
-      console.log("[JiraAuthProvider] Main app detected. Subscribing to auth channel:", currentState);
       unsubAuth = realtimeService.subscribeToAuth(currentState, (authCode: string) => {
-        console.log("[JiraAuthProvider] Code received via subscription!");
         const stateKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_STATE_KEY || "jira_auth_state";
-        
         if (localStorage.getItem(stateKey) === currentState) {
           localStorage.removeItem(stateKey);
           handleTokenExchange(authCode);
@@ -124,8 +120,10 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
 
     const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'JIRA_AUTH_CODE') {
-        const { code: mCode, state: mState } = event.data;
+      // Type-safe data check
+      const data = event.data as unknown;
+      if (data && typeof data === 'object' && (data as Record<string, unknown>).type === 'JIRA_AUTH_CODE') {
+        const { code: mCode, state: mState } = data as { code: string, state: string };
         const stateKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_STATE_KEY || "jira_auth_state";
         if (mState === localStorage.getItem(stateKey)) { 
           handleTokenExchange(mCode); 
@@ -143,32 +141,25 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const startOAuth = () => {
     if (!CLIENT_ID) {
-      miro.board.notifications.showError("Missing JIRA_CLIENT_ID in environment variables.");
+      if (typeof miro !== 'undefined') {
+        miro.board.notifications.showError("Missing JIRA_CLIENT_ID in environment variables.");
+      }
       return;
     }
     const state = Math.random().toString(36).substring(7);
     const stateKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_STATE_KEY || "jira_auth_state";
     localStorage.setItem(stateKey, state);
     
-    console.log("[JiraAuth] Starting OAuth with state:", state);
-    
     // Clear previous subscription if user clicked multiple times
     if (authUnsubRef.current) authUnsubRef.current();
     
     // Listen for this specific session
     authUnsubRef.current = realtimeService.subscribeToAuth(state, (authCode: string) => {
-      console.log("[JiraAuth] Code received for state:", state);
       authUnsubRef.current = null; // Auto clear reference when done
-      
       const savedState = localStorage.getItem(stateKey);
-      
-      // Check if this is still the state we are waiting for
       if (savedState === state) {
-        // --- CRITICAL: Clear state immediately to prevent duplicate exchange on refresh ---
         localStorage.removeItem(stateKey);
         handleTokenExchange(authCode);
-      } else {
-        console.warn("[JiraAuth] State mismatch or already processed. Ignoring signal.");
       }
     });
 
@@ -185,7 +176,7 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     window.open(url, 'JiraAuth', 'width=600,height=800');
   };
 
-  const selectResource = (resource: any) => {
+  const selectResource = (resource: JiraResource) => {
     if (!pendingAuthData) return;
     
     const newCfg: JiraConfig = { 

@@ -6,39 +6,41 @@ import { SummaryCard } from "../components/SummaryCard";
 import { useGlobalConfig } from "../contexts/GlobalConfigContext";
 import { cacheUtils } from "../utils/cacheUtils";
 
+interface CacheInfoEntry {
+  name: string;
+  expiry: number;
+  prefix: string;
+}
+
 export const SettingsView: React.FC = () => {
-  const { config, updateConfig, boardId, isLoading } = useGlobalConfig();
+  const { config, updateConfig, isLoading } = useGlobalConfig();
   const [localConfig, setLocalConfig] = React.useState(config);
   const [saving, setSaving] = React.useState(false);
   const [jiraInfo, setJiraInfo] = React.useState<{ name?: string, site?: string } | null>(null);
-  const [cacheInfo, setCacheInfo] = React.useState<string[]>([]);
+  const [cacheInfo, setCacheInfo] = React.useState<CacheInfoEntry[]>([]);
 
-  React.useEffect(() => {
-    setLocalConfig(config);
-    loadSystemInfo();
-  }, [config]);
-
-  const loadSystemInfo = () => {
+  const loadSystemInfo = React.useCallback(() => {
     // 1. Get Jira Info
     const jiraKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_CONFIG_KEY || "jira-config-v2";
     const saved = localStorage.getItem(jiraKey);
     if (saved) {
       try {
-        const parsed = JSON.parse(saved);
-        // Jira Service might have stored name during login
+        const parsed = JSON.parse(saved) as { user?: { displayName: string }, siteUrl?: string };
         setJiraInfo({ name: parsed.user?.displayName || "Connected", site: parsed.siteUrl });
-      } catch(e) {}
+      } catch(e: unknown) {}
     } else {
       setJiraInfo(null);
     }
 
     // 2. Identify active caches with TTL info
-    const activeCaches: { name: string, expiry: number, prefix: string }[] = [];
+    const activeCaches: CacheInfoEntry[] = [];
     const keys = Object.keys(localStorage);
     
     keys.forEach(k => {
       try {
-        const entry = JSON.parse(localStorage.getItem(k) || "");
+        const raw = localStorage.getItem(k);
+        if (!raw) return;
+        const entry = JSON.parse(raw) as { expiry?: number };
         if (entry && entry.expiry) {
           if (k.startsWith('miro_cache_tags_')) {
             if (!activeCaches.find(c => c.name === "Miro Tags")) 
@@ -54,23 +56,28 @@ export const SettingsView: React.FC = () => {
               activeCaches.push({ name: "User Info", expiry: entry.expiry, prefix: 'miro_cache_user_info' });
           }
         }
-      } catch(e) {}
+      } catch(e: unknown) {}
     });
     
-    setCacheInfo(activeCaches as any);
-  };
+    setCacheInfo(activeCaches);
+  }, []);
+
+  React.useEffect(() => {
+    setLocalConfig(config);
+    loadSystemInfo();
+  }, [config, loadSystemInfo]);
 
   const handleClearSpecificCache = (prefix: string, name: string) => {
     cacheUtils.clearByPrefix(prefix);
     loadSystemInfo();
-    miro.board.notifications.showInfo(`Cleared cache: ${name}`);
+    if (typeof miro !== 'undefined') {
+      miro.board.notifications.showInfo(`Cleared cache: ${name}`);
+    }
   };
 
   const handleClearCache = () => {
-    // Clear all app caches using the utility
     cacheUtils.clearAll();
     
-    // Also clear specific UI settings
     const uiSettings = [
       'miro_timesheet_only_me', 
       'miro_timesheet_include_unassigned', 
@@ -80,14 +87,18 @@ export const SettingsView: React.FC = () => {
     uiSettings.forEach(k => localStorage.removeItem(k));
     
     loadSystemInfo();
-    miro.board.notifications.showInfo("All local caches and settings cleared.");
+    if (typeof miro !== 'undefined') {
+      miro.board.notifications.showInfo("All local caches and settings cleared.");
+    }
   };
 
   const handleSave = async () => {
     setSaving(true);
     await updateConfig(localConfig);
     setSaving(false);
-    miro.board.notifications.showInfo("Global settings saved to board");
+    if (typeof miro !== 'undefined') {
+      miro.board.notifications.showInfo("Global settings saved to board");
+    }
   };
 
   if (isLoading) return <div className="loading">Loading settings...</div>;
@@ -125,9 +136,9 @@ export const SettingsView: React.FC = () => {
               <div style={{ fontSize: '11px', marginBottom: '12px' }}>
                 <div style={{ opacity: 0.6, marginBottom: '6px' }}>Data Caches (Click to clear individually):</div>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                  {cacheInfo.map((c: any) => {
+                  {cacheInfo.map((c) => {
                     const minutes = Math.max(0, Math.round((c.expiry - Date.now()) / 1000 / 60));
-                    const formatTime = (m: number) => {
+                    const formatTime = (m: number): string => {
                       if (m >= 1440) return `${Math.round(m / 1440)}d`;
                       if (m >= 60) return `${Math.round(m / 60)}h`;
                       return `${m}m`;
@@ -192,6 +203,12 @@ export const SettingsView: React.FC = () => {
               value={localConfig.tsProject}
               onChange={(e) => setLocalConfig({ ...localConfig, tsProject: e.target.value })}
               placeholder="[{project}]"
+            />
+            <InputField 
+              label="Meeting Tag"
+              value={localConfig.tsMeetingTag}
+              onChange={(e) => setLocalConfig({ ...localConfig, tsMeetingTag: e.target.value })}
+              placeholder="meeting"
             />
             <InputField 
               label="Meeting Pattern"

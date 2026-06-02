@@ -1,47 +1,31 @@
 import * as React from "react";
 import { Button } from "./Button";
+import { usePanel } from "@/contexts/PanelContext";
 
-interface SprintActionsProps {
-  handleSelectAll: () => void;
-  handleSelectInView: () => void;
-  handleStartVoting: () => void;
-  handleAction: (name: string, fn: () => Promise<any>) => void;
-  activeAction: string | null;
-  handleCreateRefinementFrame: () => Promise<any>;
-  handleDuplicateAndLink: () => Promise<any>;
-  handleRemoveLinks: () => Promise<any>;
-  handleReorderSelectedCards: () => Promise<any>;
-  handleSyncMetadataFromParent: () => Promise<any>;
-  handleClearMetadata: () => Promise<any>;
-  handleInspectMetadata: () => Promise<any>;
-  isProcessing: boolean;
-  itemCount: number;
-  showGuide: boolean;
-  setShowGuide: (show: boolean) => void;
-  votingSession?: any;
-  handleResetVoting?: () => void;
-}
+export const SprintActions: React.FC = () => {
+  const {
+    handleSelectAll,
+    handleSelectInView,
+    handleStartVoting,
+    handleAction,
+    activeAction,
+    handleCreateRefinementFrame,
+    handleDuplicateAndLink,
+    handleRemoveLinks,
+    handleReorderSelectedCards,
+    handleSyncMetadataFromParent,
+    handleClearMetadata,
+    handleInspectMetadata,
+    isProcessing,
+    summary,
+    showGuide,
+    setShowGuide,
+    votingSession,
+    handleResetVoting,
+  } = usePanel();
 
-export const SprintActions: React.FC<SprintActionsProps> = ({
-  handleSelectAll,
-  handleSelectInView,
-  handleStartVoting,
-  handleAction,
-  activeAction,
-  handleCreateRefinementFrame,
-  handleDuplicateAndLink,
-  handleRemoveLinks,
-  handleReorderSelectedCards,
-  handleSyncMetadataFromParent,
-  handleClearMetadata,
-  handleInspectMetadata,
-  isProcessing,
-  itemCount,
-  showGuide,
-  setShowGuide,
-  votingSession,
-  handleResetVoting,
-}) => {
+  const itemCount = summary.count;
+
   return (
     <>
       <div className="divider"></div>

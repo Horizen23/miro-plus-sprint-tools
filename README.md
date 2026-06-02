@@ -64,6 +64,29 @@ npm run dev
 
 ---
 
+## 🧪 Testing
+
+The project uses **Vitest** for unit testing, along with **React Testing Library** and **MSW** for API mocking.
+
+### Run Tests
+```bash
+# Run tests once
+npm run test:run
+
+# Run tests in watch mode
+npm test
+
+# Run tests with coverage report
+npm run test:coverage
+```
+
+### Writing New Tests
+- **Utility Tests**: Place `.test.ts` files alongside the implementation (e.g., `src/utils/math.test.ts`).
+- **Component Tests**: Place `.test.tsx` files alongside the component (e.g., `src/components/Button.test.tsx`).
+- **API Mocks**: Use `src/test/mocks/handlers.ts` to add new MSW handlers for external API responses.
+
+---
+
 ## 📖 Documentation
 For detailed setup instructions, including Atlassian and Miro console configuration, please refer to the:
 👉 **[SETUP_GUIDE.md](./SETUP_GUIDE.md)**

@@ -3,7 +3,7 @@ import { SectionHeader } from "../components/SectionHeader";
 import { SummaryCard, SummaryRow } from "../components/SummaryCard";
 import { InputField } from "../components/InputField";
 import { CalendarPicker } from "../components/CalendarPicker";
-import { getBucketedPoint, mapHoursToPoints } from "../utils/estimationUtils";
+import { getBucketedPoint, mapHoursToPoints } from "../services/miro/estimationUtils";
 
 interface TeamMember {
   id: string;

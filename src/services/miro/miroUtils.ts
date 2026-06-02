@@ -1,12 +1,66 @@
-import type { Card, Frame, AppCard } from "@mirohq/websdk-types";
-import { parseCardTitle, formatCardTitle } from './estimationUtils';
-import { notify, copyAndNotify } from './uiUtils';
+import type { Card, Frame, AppCard, Item, Tag, StickyNote } from "@mirohq/websdk-types";
+import { parseCardTitle, formatCardTitle, compareSequences } from './estimationUtils';
+import { notify } from './uiUtils';
+import { cacheUtils } from '../../utils/cacheUtils';
 
 const MIRO_BOARD_URL = process.env.NEXT_PUBLIC_MIRO_BOARD_URL || "https://miro.com/app/board/";
 
-export async function handleDuplicateAndLink() {
+interface ItemWithGlobal {
+  item: Card | AppCard;
+  globalX: number;
+  globalY: number;
+  parentFrame: Frame | null;
+}
+
+/**
+ * Helper to get currently selected Cards or AppCards.
+ */
+async function getSelectedCards(): Promise<(Card | AppCard)[]> {
+  if (typeof miro === 'undefined') return [];
   const selection = await miro.board.getSelection();
-  const cards = selection.filter(item => item.type === "card" || item.type === "app_card") as (Card | AppCard)[];
+  return selection.filter((item): item is Card | AppCard => 
+    item.type === "card" || item.type === "app_card"
+  );
+}
+
+/**
+ * Helper to calculate global coordinates for an item, taking frames into account.
+ */
+async function getGlobalCoords(item: Item): Promise<{ x: number, y: number, parentFrame: Frame | null }> {
+  const itemX = (item as unknown as { x?: number }).x ?? 0;
+  const itemY = (item as unknown as { y?: number }).y ?? 0;
+  let gx = itemX;
+  let gy = itemY;
+  let pFrame: Frame | null = null;
+
+  const parentId = (item as unknown as { parentId?: string }).parentId;
+  if (parentId) {
+    try {
+      const parent = await miro.board.getById(parentId);
+      if (parent && parent.type === "frame") {
+        pFrame = parent as Frame;
+        const pX = (pFrame as unknown as { x?: number }).x ?? 0;
+        const pY = (pFrame as unknown as { y?: number }).y ?? 0;
+        const pWidth = (pFrame as unknown as { width?: number }).width ?? 0;
+        const pHeight = (pFrame as unknown as { height?: number }).height ?? 0;
+
+        gx = pX - pWidth / 2 + itemX;
+        gy = pY - pHeight / 2 + itemY;
+      }
+    } catch (e: unknown) {
+      console.warn(`[miroUtils] Failed to get parent frame for ${item.id}`, e);
+    }
+  }
+  return { x: gx, y: gy, parentFrame: pFrame };
+}
+
+export async function handleDuplicateAndLink(): Promise<void> {
+  if (typeof miro === 'undefined') return;
+
+  const selection = await miro.board.getSelection();
+  const cards = selection.filter((item): item is Card | AppCard => 
+    item.type === "card" || item.type === "app_card"
+  );
 
   if (cards.length === 0) {
     await notify("Please select a card to duplicate.", "error");
@@ -15,44 +69,26 @@ export async function handleDuplicateAndLink() {
 
   const { id: boardId } = await miro.board.getInfo();
   
-  // 1. Calculate Global Coordinates and find the right-most boundary
-  interface ItemWithGlobal {
-    item: Card | AppCard;
-    globalX: number;
-    globalY: number;
-    parentFrame: Frame | null;
-  }
-
   const itemsWithCoords: ItemWithGlobal[] = [];
   let minLeftGlobalX = Infinity;
   let overallMaxRightX = -Infinity;
 
   for (const card of cards) {
-    let gx = card.x;
-    let gy = card.y;
-    let pFrame: Frame | null = null;
-
-    if (card.parentId) {
-      try {
-        const parent = await miro.board.getById(card.parentId);
-        if (parent && parent.type === "frame") {
-          pFrame = parent as Frame;
-          gx = (pFrame.x - (pFrame.width || 0) / 2) + card.x;
-          gy = (pFrame.y - (pFrame.height || 0) / 2) + card.y;
-        }
-      } catch (e) {}
-    }
+    const cardWidth = (card as unknown as { width?: number }).width ?? 320;
+    const { x: gx, y: gy, parentFrame: pFrame } = await getGlobalCoords(card);
     
     itemsWithCoords.push({ item: card, globalX: gx, globalY: gy, parentFrame: pFrame });
 
-    const left = gx - (card.width || 320) / 2;
-    const right = gx + (card.width || 320) / 2;
+    const left = gx - cardWidth / 2;
+    const right = gx + cardWidth / 2;
 
     if (left < minLeftGlobalX) minLeftGlobalX = left;
     if (right > overallMaxRightX) overallMaxRightX = right;
     
     if (pFrame) {
-      const frameRight = pFrame.x + (pFrame.width || 0) / 2;
+      const pX = (pFrame as unknown as { x?: number }).x ?? 0;
+      const pWidth = (pFrame as unknown as { width?: number }).width ?? 0;
+      const frameRight = pX + pWidth / 2;
       if (frameRight > overallMaxRightX) overallMaxRightX = frameRight;
     }
   }
@@ -77,32 +113,34 @@ export async function handleDuplicateAndLink() {
       let newItem: Card | AppCard;
 
       if (originalCard.type === 'card') {
+        const c = originalCard as Card;
         newItem = await miro.board.createCard({
-          title: originalCard.title || "",
-          description: originalCard.description || "",
-          style: originalCard.style,
+          title: c.title || "",
+          description: c.description || "",
+          style: c.style,
           x: targetX,
           y: targetY,
-          width: originalCard.width || 320,
-          rotation: originalCard.rotation,
-          dueDate: originalCard.dueDate,
-          startDate: originalCard.startDate,
-          assignee: originalCard.assignee?.userId ? { userId: originalCard.assignee.userId } : undefined,
-          taskStatus: originalCard.taskStatus,
-          tagIds: originalCard.tagIds || [],
+          width: (c as unknown as { width?: number }).width ?? 320,
+          rotation: (c as unknown as { rotation?: number }).rotation ?? 0,
+          dueDate: c.dueDate,
+          startDate: c.startDate,
+          assignee: c.assignee?.userId ? { userId: c.assignee.userId } : undefined,
+          taskStatus: c.taskStatus,
+          tagIds: c.tagIds || [],
         });
       } else {
+        const ac = originalCard as AppCard;
         newItem = await miro.board.createAppCard({
-          title: originalCard.title || "",
-          description: originalCard.description || "",
-          style: originalCard.style,
+          title: ac.title || "",
+          description: ac.description || "",
+          style: ac.style,
           x: targetX,
           y: targetY,
-          width: originalCard.width || 320,
-          rotation: originalCard.rotation,
-          status: originalCard.status || 'disconnected',
-          fields: originalCard.fields || [],
-          tagIds: originalCard.tagIds || [],
+          width: (ac as unknown as { width?: number }).width ?? 320,
+          rotation: (ac as unknown as { rotation?: number }).rotation ?? 0,
+          status: ac.status || 'disconnected',
+          fields: ac.fields || [],
+          tagIds: ac.tagIds || [],
         });
       }
       
@@ -113,14 +151,14 @@ export async function handleDuplicateAndLink() {
       const metadataKey = process.env.NEXT_PUBLIC_MIRO_METADATA_KEY || "jira-sync";
       try {
         const metadata = await originalCard.getMetadata(metadataKey);
-        if (metadata && Object.keys(metadata).length > 0) {
+        if (metadata && typeof metadata === 'object' && Object.keys(metadata).length > 0) {
           await newItem.setMetadata(metadataKey, metadata);
         }
-      } catch (e) {
+      } catch (e: unknown) {
         console.warn("Failed to copy metadata:", e);
       }
 
-      newItem.linkedTo = originalUrl;
+      (newItem as unknown as { linkedTo?: string }).linkedTo = originalUrl;
       await newItem.sync();
       newItems.push(newItem);
 
@@ -131,17 +169,17 @@ export async function handleDuplicateAndLink() {
           const freshItem = await miro.board.getById(originalCard.id);
           if (freshItem && (freshItem.type === "card" || freshItem.type === "app_card")) {
             const freshCard = freshItem as (Card | AppCard);
-            if (!freshCard.linkedTo) {
-              freshCard.linkedTo = newUrl;
+            if (!(freshCard as unknown as { linkedTo?: string }).linkedTo) {
+              (freshCard as unknown as { linkedTo?: string }).linkedTo = newUrl;
               await freshCard.sync();
               break;
             }
           }
-        } catch (e) {
+        } catch (e: unknown) {
           await new Promise((resolve) => setTimeout(resolve, 500));
         }
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Error duplicating item:", error);
     }
   }
@@ -150,16 +188,15 @@ export async function handleDuplicateAndLink() {
     try {
       await miro.board.deselect({ id: selection.map(s => s.id) });
       await miro.board.select({ id: newItems.map(n => n.id) });
-    } catch (e) {}
+    } catch (e: unknown) {}
   }
 }
 
 /**
  * Removes all links (linkedTo) from selected cards.
  */
-export async function handleRemoveLinks() {
-  const selection = await miro.board.getSelection();
-  const cards = selection.filter(i => i.type === 'card' || i.type === 'app_card');
+export async function handleRemoveLinks(): Promise<void> {
+  const cards = await getSelectedCards();
 
   if (cards.length === 0) {
     await notify("Please select at least one card to remove links", "error");
@@ -169,14 +206,13 @@ export async function handleRemoveLinks() {
   let count = 0;
   for (const card of cards) {
     try {
-      const item = card as any;
-      if (item.linkedTo) {
-        item.linkedTo = undefined;
-        await item.sync();
+      if (card.linkedTo) {
+        card.linkedTo = undefined;
+        await card.sync();
         count++;
       }
-    } catch (e) {
-
+    } catch (e: unknown) {
+      console.warn(`[miroUtils] Failed to remove link for ${card.id}`, e);
     }
   }
 
@@ -184,11 +220,10 @@ export async function handleRemoveLinks() {
 }
 
 /**
- * Temporary feature: Copies metadata from parent card (via linkedTo) to selected cards.
+ * Copies metadata from parent card (via linkedTo) to selected cards.
  */
-export async function handleSyncMetadataFromParent() {
-  const selection = await miro.board.getSelection();
-  const cards = selection.filter(i => i.type === 'card' || i.type === 'app_card') as (Card | AppCard)[];
+export async function handleSyncMetadataFromParent(): Promise<void> {
+  const cards = await getSelectedCards();
 
   if (cards.length === 0) {
     await notify("Please select at least one card to sync metadata", "error");
@@ -210,14 +245,14 @@ export async function handleSyncMetadataFromParent() {
       if (parentId) {
         const parent = await miro.board.getById(parentId);
         if (parent && (parent.type === 'card' || parent.type === 'app_card')) {
-          const metadata = await parent.getMetadata(metadataKey);
-          if (metadata && Object.keys(metadata).length > 0) {
+          const metadata = await (parent as Card | AppCard).getMetadata(metadataKey);
+          if (metadata && typeof metadata === 'object' && Object.keys(metadata).length > 0) {
             await card.setMetadata(metadataKey, metadata);
             count++;
           }
         }
       }
-    } catch (e) {
+    } catch (e: unknown) {
       console.warn("Failed to sync metadata for card", card.id, e);
     }
   }
@@ -232,9 +267,8 @@ export async function handleSyncMetadataFromParent() {
 /**
  * Removes sync metadata (defined by NEXT_PUBLIC_MIRO_METADATA_KEY) from selected cards.
  */
-export async function handleClearMetadata() {
-  const selection = await miro.board.getSelection();
-  const cards = selection.filter(i => i.type === 'card' || i.type === 'app_card') as any[];
+export async function handleClearMetadata(): Promise<void> {
+  const cards = await getSelectedCards();
 
   if (cards.length === 0) {
     await notify("Please select at least one card to clear metadata", "error");
@@ -248,7 +282,7 @@ export async function handleClearMetadata() {
     try {
       await card.setMetadata(metadataKey, {});
       count++;
-    } catch (e) {
+    } catch (e: unknown) {
       console.warn("Failed to clear metadata", card.id, e);
     }
   }
@@ -258,9 +292,11 @@ export async function handleClearMetadata() {
   }
 }
 
-export async function handleCreateRefinementFrame() {
+export async function handleCreateRefinementFrame(): Promise<void> {
+  if (typeof miro === 'undefined') return;
+
   const selection = await miro.board.getSelection();
-  const frames = selection.filter((item) => item.type === 'frame') as Frame[];
+  const frames = selection.filter((item): item is Frame => item.type === 'frame');
 
   if (frames.length === 0) {
     await notify('Please select at least one Frame to refine.', 'error');
@@ -270,19 +306,20 @@ export async function handleCreateRefinementFrame() {
   // Fetch global config for jiraPrefix
   let jiraPrefix = process.env.NEXT_PUBLIC_JIRA_PREFIX || 'FTDGENERIC';
   try {
-    const config = await (miro.board as any).getAppData('globalConfig');
-    if (config?.jiraPrefix) jiraPrefix = config.jiraPrefix;
-  } catch (e) {}
+    const board = miro.board as unknown as { getAppData: (key: string) => Promise<Record<string, string> | undefined> };
+    const config = await board.getAppData('globalConfig');
+    if (config?.['jiraPrefix']) jiraPrefix = config['jiraPrefix'];
+  } catch (e: unknown) {}
 
   const margin = Number(process.env.NEXT_PUBLIC_MIRO_FRAME_MARGIN || 200);
   const newFrames: Frame[] = [];
 
   for (const sourceFrame of frames) {
     const sourceName = sourceFrame.title || 'Untitled Frame';
-    const w = Math.max(sourceFrame.width || 0, 100);
-    const h = Math.max(sourceFrame.height || 0, 100);
-    const x = sourceFrame.x || 0;
-    const y = sourceFrame.y || 0;
+    const w = Math.max(sourceFrame.width ?? 0, 100);
+    const h = Math.max(sourceFrame.height ?? 0, 100);
+    const x = sourceFrame.x ?? 0;
+    const y = sourceFrame.y ?? 0;
 
     const targetX = x + w + margin;
     const targetY = y;
@@ -302,43 +339,42 @@ export async function handleCreateRefinementFrame() {
       });
 
       // 2. Detect Jira Cards (app_cards and cards)
-      let cardsInside: any[] = [];
+      let cardsInside: (Card | AppCard)[] = [];
       if (sourceFrame.childrenIds && sourceFrame.childrenIds.length > 0) {
         const children = await miro.board.get({
           id: sourceFrame.childrenIds,
         });
 
         cardsInside = children.filter(
-          (item) => item.type === 'app_card' || item.type === 'card'
+          (item): item is Card | AppCard => item.type === 'app_card' || item.type === 'card'
         );
       }
 
-      // Get all existing tags once
+      // Get all existing tags once using cacheUtils
       const TAGS_CACHE_KEY = 'miro_tags_cache';
-      const TAGS_CACHE_TIME = 24 * 3600 * 1000;
-      let allTags = (window as any)[TAGS_CACHE_KEY]?.data;
-      if (!allTags || Date.now() - ((window as any)[TAGS_CACHE_KEY]?.timestamp || 0) > TAGS_CACHE_TIME) {
+      const TAGS_TTL = 3600; // 1 hour
+      
+      let allTags = cacheUtils.get<Tag[]>(TAGS_CACHE_KEY) || [];
+
+      if (allTags.length === 0) {
         allTags = await miro.board.get({ type: 'tag' });
-        (window as any)[TAGS_CACHE_KEY] = { data: allTags, timestamp: Date.now() };
+        cacheUtils.set(TAGS_CACHE_KEY, allTags, TAGS_TTL);
       }
 
       // 3. Get or Create Test-Frame Tag
-      let testFrameTag = allTags.find((t: any) => t.title === 'Test-Frame');
+      let testFrameTag = allTags.find((t) => t.title === 'Test-Frame');
       if (!testFrameTag) {
         try {
           testFrameTag = await miro.board.createTag({
             title: 'Test-Frame',
             color: 'red',
           });
-          allTags.push(testFrameTag as any);
-        } catch (e) {
-
-        }
+          allTags.push(testFrameTag);
+        } catch (e: unknown) {}
       }
 
       // Define the Simplified Workflow (TA for Test)
       const workflow = [
-        // Track T: Test (Single TA Group)
         { title: 'QA Checklist File', seq: 'TA1.00', estimate: '0h', track: 'T', color: '#f16d6d' },
         { title: 'Test Frame', seq: 'TA2.00', estimate: '0h', track: 'T', color: '#f16d6d' },
         { title: 'Excecute Checklist', seq: 'TA3.00', estimate: '0h', track: 'T', color: '#f16d6d' },
@@ -346,11 +382,10 @@ export async function handleCreateRefinementFrame() {
         { title: 'QA Test Frame Scenario Testcase', seq: 'TA5.00', estimate: '0h', track: 'T', color: '#f16d6d' },
       ];
 
-      const trackA: any[] = []; // Dev track now handled by the main card
       const trackB = workflow.filter((w) => w.track === 'T');
 
       // If no cards found, create a placeholder template
-      const itemsToProcess =
+      const itemsToProcess: { title: string, x?: number, y?: number, fields?: unknown[] }[] =
         cardsInside.length > 0
           ? cardsInside
           : [
@@ -363,50 +398,47 @@ export async function handleCreateRefinementFrame() {
             ];
 
       let cardIndex = 0;
-      for (const card of itemsToProcess as any) {
+      for (const card of itemsToProcess) {
         // 4. Extract Issue Key from fields (Optional)
-        const jiraField = card.fields?.find(
-          (f: any) => f.tooltip === 'Issue type, Issue key'
+        const fields = (card as AppCard).fields || [];
+        const jiraField = fields.find(
+          (f) => f.tooltip === 'Issue type, Issue key'
         );
         let issueKey = jiraField?.value;
         let idPart = "";
 
         if (issueKey && jiraPrefix) {
-          // Extract just the key if it's "Type, Key"
           const keyOnly = issueKey.includes(',') ? issueKey.split(',').pop()?.trim() || issueKey : issueKey;
-          // Replace prefix
           idPart = keyOnly.includes('-') ? keyOnly.split('-').pop() || "" : keyOnly;
           issueKey = `${jiraPrefix}-${idPart}`;
         }
 
-        let jiraTag = null;
+        let jiraTag: Tag | null = null;
         if (issueKey) {
           const tagName = `jira-${idPart || issueKey}`;
-          jiraTag = allTags.find((t: any) => t.title === tagName);
+          jiraTag = allTags.find((t) => t.title === tagName) || null;
           if (!jiraTag) {
             try {
               jiraTag = await miro.board.createTag({
                 title: tagName,
                 color: 'black',
               });
-              allTags.push(jiraTag as any);
-            } catch (e) {
+              allTags.push(jiraTag);
+            } catch (e: unknown) {
               console.error('Failed to create tag', tagName, e);
             }
           }
         }
 
-        const frameCenterX = newFrame.x || 0;
-        const frameCenterY = newFrame.y || 0;
-        const startX = -(newFrame.width / 2) + 180; // Offset from left edge
-        const startY = -(newFrame.height / 2) + 80;  // Offset from top edge
+        const frameCenterX = newFrame.x ?? 0;
+        const frameCenterY = newFrame.y ?? 0;
+        const startX = -( (newFrame.width ?? 0) / 2) + 180; // Offset from left edge
+        const startY = -( (newFrame.height ?? 0) / 2) + 80;  // Offset from top edge
         const verticalGap = 150;
-        const columnWidth = 350; // Distance between Dev and Test columns
 
-        // 5. Create the main card (Dev Default - Aligned Left)
+        // 5. Create the main card
         try {
-          // Clean existing patterns and format using central logic
-          const { cleanTitle: clean } = parseCardTitle(card.title);
+          const { cleanTitle: clean } = parseCardTitle(card.title || "");
 
           const mainCard = await miro.board.createCard({
             title: formatCardTitle({ seq: 'A1.00', estimate: '0h', cleanTitle: clean }),
@@ -419,31 +451,27 @@ export async function handleCreateRefinementFrame() {
           cardIndex++;
 
           // 6. Create Parallel Workflow Cards (Test Track)
-          const maxTrackLen = Math.max(trackA.length, trackB.length);
-          for (let i = 0; i < maxTrackLen; i++) {
-            if (trackB[i]) {
-              const w = trackB[i];
-              const redCardB = await miro.board.createCard({
-                title: formatCardTitle({ seq: w.seq, estimate: w.estimate, cleanTitle: w.title }),
-                style: { cardTheme: w.color },
-                x: frameCenterX + startX,
-                y: frameCenterY + startY + cardIndex * verticalGap,
-                tagIds: [
-                  ...(jiraTag ? [jiraTag.id] : []),
-                  ...(testFrameTag ? [testFrameTag.id] : []),
-                ],
-              });
-              await newFrame.add(redCardB);
-              cardIndex++;
-            }
+          for (const w of trackB) {
+            const redCardB = await miro.board.createCard({
+              title: formatCardTitle({ seq: w.seq, estimate: w.estimate, cleanTitle: w.title }),
+              style: { cardTheme: w.color as string },
+              x: frameCenterX + startX,
+              y: frameCenterY + startY + cardIndex * verticalGap,
+              tagIds: [
+                ...(jiraTag ? [jiraTag.id] : []),
+                ...(testFrameTag ? [testFrameTag.id] : []),
+              ],
+            });
+            await newFrame.add(redCardB);
+            cardIndex++;
           }
           cardIndex += 0.5;
-        } catch (e) {
-
+        } catch (e: unknown) {
+          console.warn(`[miroUtils] Failed to create cards for item ${card.title}`, e);
         }
       }
       newFrames.push(newFrame);
-    } catch (error) {
+    } catch (error: unknown) {
       console.error(
         'Error creating refinement frame for item:',
         sourceFrame.id,
@@ -457,39 +485,44 @@ export async function handleCreateRefinementFrame() {
   }
 }
 
-export async function handleCreateSticky(texts: string[], parentFrameId?: string) {
-  let minX = 0, minY = 0, targetFrame: any = null;
+export async function handleCreateSticky(texts: string[], parentFrameId?: string): Promise<void> {
+  if (typeof miro === 'undefined') return;
+
+  let minX = 0, minY = 0, targetFrame: Frame | null = null;
 
   // 1. Resolve starting position and target frame
   if (parentFrameId) {
     try {
-      targetFrame = await miro.board.getById(parentFrameId);
-      if (targetFrame && targetFrame.type === 'frame') {
-        minX = targetFrame.x - targetFrame.width / 2;
-        minY = targetFrame.y - targetFrame.height / 2;
+      const item = await miro.board.getById(parentFrameId);
+      if (item && item.type === 'frame') {
+        targetFrame = item as Frame;
+        minX = (targetFrame.x ?? 0) - (targetFrame.width ?? 0) / 2;
+        minY = (targetFrame.y ?? 0) - (targetFrame.height ?? 0) / 2;
       }
-    } catch (e) {
-
-    }
+    } catch (e: unknown) {}
   }
 
-  // Fallback to selection or viewport if no parent frame provided or found
+  // Fallback to selection or viewport
   if (!targetFrame) {
     const selection = await miro.board.getSelection();
     if (selection.length > 0) {
-      const first = selection[0] as any;
-      minX = first.x;
-      minY = first.y;
+      const first = selection[0];
+      const firstX = (first as unknown as { x?: number }).x ?? 0;
+      const firstY = (first as unknown as { y?: number }).y ?? 0;
+      const firstParentId = (first as unknown as { parentId?: string }).parentId;
+
+      minX = firstX;
+      minY = firstY;
       // If the selected item has a parent frame, let's use that
-      if (first.parentId) {
+      if (firstParentId) {
         try {
-          const parent = await miro.board.getById(first.parentId);
+          const parent = await miro.board.getById(firstParentId);
           if (parent && parent.type === 'frame') {
-            targetFrame = parent;
-            minX = targetFrame.x - targetFrame.width / 2;
-            minY = targetFrame.y - targetFrame.height / 2;
+            targetFrame = parent as Frame;
+            minX = (targetFrame.x ?? 0) - (targetFrame.width ?? 0) / 2;
+            minY = (targetFrame.y ?? 0) - (targetFrame.height ?? 0) / 2;
           }
-        } catch (e) {}
+        } catch (e: unknown) {}
       }
     } else {
       const viewport = await miro.board.viewport.get();
@@ -498,7 +531,7 @@ export async function handleCreateSticky(texts: string[], parentFrameId?: string
     }
   }
 
-  const createdItems = [];
+  const createdItems: StickyNote[] = [];
   const startX = targetFrame ? minX + 50 : minX;
   const startY = targetFrame ? minY + 50 : minY;
 
@@ -509,7 +542,7 @@ export async function handleCreateSticky(texts: string[], parentFrameId?: string
         x: startX + (i * 220),
         y: startY,
         style: {
-          fillColor: (process.env.NEXT_PUBLIC_MIRO_STICKY_COLOR as any) || 'black',
+          fillColor: 'black',
           textAlign: 'center',
           textAlignVertical: 'middle'
         }
@@ -517,12 +550,10 @@ export async function handleCreateSticky(texts: string[], parentFrameId?: string
       
       createdItems.push(sticky);
 
-      if (targetFrame && targetFrame.add) {
+      if (targetFrame) {
         await targetFrame.add(sticky);
       }
-    } catch (e) {
-
-    }
+    } catch (e: unknown) {}
   }
 
   if (createdItems.length > 0) {
@@ -533,67 +564,51 @@ export async function handleCreateSticky(texts: string[], parentFrameId?: string
 /**
  * Reorders selected cards vertically based on their sequence logic.
  */
-export async function handleReorderSelectedCards() {
-  const selection = await miro.board.getSelection();
-  const cards = selection.filter(i => i.type === 'card' || i.type === 'app_card');
+export async function handleReorderSelectedCards(): Promise<void> {
+  const cards = await getSelectedCards();
   
   if (cards.length === 0) {
     await notify("Please select at least one card to reorder", "error");
     return;
   }
 
-  // 1. Parse and Sort
-  const { parseCardTitle, compareSequences } = await import('./estimationUtils');
-  
   const sortedCards = [...cards].sort((a, b) => {
-    const dataA = parseCardTitle((a as any).title || "");
-    const dataB = parseCardTitle((b as any).title || "");
+    const dataA = parseCardTitle(a.title || "");
+    const dataB = parseCardTitle(b.title || "");
     return compareSequences(dataA.seq, dataB.seq);
   });
 
-  // 2. Position Alignment
-  // Find the global left-most edge to use as alignment anchor
   let minLeft = Infinity;
   let minY = Infinity;
   
   cards.forEach(c => {
-    const item = c as any;
-    const w = item.width || 0;
-    const h = item.height || 0;
-    const left = item.x - w / 2;
-    const top = item.y - h / 2;
+    const cardObj = c as unknown as { x?: number, y?: number, width?: number, height?: number };
+    const w = cardObj.width ?? 0;
+    const h = cardObj.height ?? 0;
+    const left = (cardObj.x ?? 0) - w / 2;
+    const top = (cardObj.y ?? 0) - h / 2;
     
     if (left < minLeft) minLeft = left;
     if (top < minY) minY = top;
   });
 
-  // Fallback if no valid positions found
   if (minLeft === Infinity) minLeft = 0;
   if (minY === Infinity) minY = 0;
 
   let currentY = minY;
-  const margin = 20; // Fixed gap between cards
+  const margin = 20;
 
-  for (let i = 0; i < sortedCards.length; i++) {
-    const card = sortedCards[i] as any;
-    const cardWidth = card.width || 200;
-    const cardHeight = card.height || 120;
+  for (const card of sortedCards) {
+    const cardObj = card as unknown as { x: number, y: number, width?: number, height?: number, sync: () => Promise<void> };
+    const cardWidth = cardObj.width ?? 200;
+    const cardHeight = cardObj.height ?? 120;
     
-    // Align left edge to minLeft
-    card.x = minLeft + (cardWidth / 2);
-    card.y = currentY + (cardHeight / 2);
-    await card.sync();
+    cardObj.x = minLeft + (cardWidth / 2);
+    cardObj.y = currentY + (cardHeight / 2);
+    await cardObj.sync();
     
     currentY += cardHeight + margin;
   }
 
   await notify(`Reordered ${sortedCards.length} cards by sequence`);
 }
-
-/**
- * Standardized clipboard copy is now handled via copyAndNotify in uiUtils.ts
- * This local version is deprecated.
- */
-
-
-

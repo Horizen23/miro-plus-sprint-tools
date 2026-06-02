@@ -1,33 +1,39 @@
 import * as React from "react";
+import type { Card, AppCard, Json } from "@mirohq/websdk-types";
 import { RealtimeFactory } from "../services/realtime/factory";
 import { VotingState } from "../services/realtime/types";
+import { Tab } from "@/contexts/PanelContext";
+import { 
+  type VotingSession, 
+  getVotingMetadata, 
+  saveVotingMetadata, 
+  findActiveVotingSession 
+} from "../services/miro/votingUtils";
 
-export interface VotingSession {
-  cardId: string;
-  cardTitle: string;
-  status: 'voting' | 'revealed';
-  votes: Record<string, string>; // userId -> points
-  participants?: string[]; // List of userIds who joined the room
-  userNames?: Record<string, string>; // userId -> name
-  estimateUnit?: 'pt' | 'h';
-  facilitatorId?: string;
+export type { VotingSession };
+
+export interface UseVotingSessionReturn {
+  votingSession: VotingSession | null;
+  currentUserId: string;
+  handleStartVoting: () => Promise<void>;
+  handleCastVote: (points: string) => Promise<void>;
+  handleRevealVotes: () => Promise<void>;
+  handleResetVoting: () => Promise<void>;
+  handleApplyVote: (points: string) => Promise<void>;
+  handleRefresh: () => Promise<void>;
+  handleVoteAgain: () => Promise<void>;
+  onlineUsersCount: number;
 }
 
 export function useVotingSession(
-  selectedItems: any[],
+  selectedItems: (Card | AppCard)[],
   setIsProcessing: (val: boolean) => void,
-  setActiveTab: (val: any) => void,
-  handleSetPoints: (points: string, items?: any[]) => Promise<void>,
+  setActiveTab: (val: Tab) => void,
+  handleSetPoints: (points: string, items?: (Card | AppCard)[]) => Promise<void>,
   estimateUnit: 'pt' | 'h',
   onFinished?: () => void
-) {
-  // Try to get cardId from URL for instant sync (used in modals)
-  const urlParams = new URLSearchParams(window.location.search);
-  const initialCardId = urlParams.get('cardId');
-
-  const [votingSession, setVotingSession] = React.useState<VotingSession | null>(
-    initialCardId ? { cardId: initialCardId, cardTitle: '', status: 'voting', votes: {} } : null
-  );
+): UseVotingSessionReturn {
+  const [votingSession, setVotingSession] = React.useState<VotingSession | null>(null);
   const votingSessionRef = React.useRef<VotingSession | null>(votingSession);
   
   // Keep ref in sync with state
@@ -44,11 +50,11 @@ export function useVotingSession(
   React.useEffect(() => {
     const fetchUser = async () => {
       try {
+        if (typeof miro === 'undefined') return;
         const info = await miro.board.getUserInfo();
         setCurrentUserId(info.id);
         setCurrentUserName(info.name || `User ${info.id.slice(-4)}`);
-      } catch (e) {
-
+      } catch (e: unknown) {
         console.error("Failed to fetch user info", e);
       }
     };
@@ -57,28 +63,25 @@ export function useVotingSession(
 
   // Realtime Integration (Adapter Pattern)
   React.useEffect(() => {
+    if (typeof miro === 'undefined') return;
     const realtime = RealtimeFactory.getInstance();
 
-    // Async setup: fetch boardId and connect
     const setup = async () => {
       try {
         const boardInfo = await miro.board.getInfo();
         realtime.connect(boardInfo.id);
       } catch {
-        realtime.connect(); // fallback without boardId
+        realtime.connect(); 
       }
 
-      // Join room if we have a session
       if (votingSession?.cardId && currentUserId) {
         realtime.joinSession(votingSession.cardId, currentUserId);
       }
     };
     setup();
 
-    const handleUpdate = (state: VotingSession) => {
-      
+    const handleUpdate = (state: VotingState) => {
       setVotingSession(prevSession => {
-        // Handle session end
         if (state.status === null) {
           if (prevSession && state.cardId === prevSession.cardId) {
             lastSessionId.current = null;
@@ -87,50 +90,48 @@ export function useVotingSession(
           return prevSession;
         }
 
-        // Handle updates for current session — MERGE participants to prevent race conditions
-        if (prevSession && state.cardId === prevSession.cardId) {
+        const votingState = state as unknown as VotingSession;
+
+        if (prevSession && votingState.cardId === prevSession.cardId) {
           const mergedParticipants = Array.from(new Set([
             ...(prevSession.participants || []),
-            ...(state.participants || [])
+            ...(votingState.participants || [])
           ]));
           const mergedUserNames = {
             ...(prevSession.userNames || {}),
-            ...(state.userNames || {})
+            ...(votingState.userNames || {})
           };
           return {
-            ...state,
+            ...votingState,
             participants: mergedParticipants,
             userNames: mergedUserNames
           };
         }
         
-        // Discover NEW session
-        if (!prevSession && state.status === 'voting' && state.cardId !== lastSessionId.current) {
-          return state;
+        if (!prevSession && votingState.status === 'voting' && votingState.cardId !== lastSessionId.current) {
+          return votingState;
         }
 
         return prevSession;
       });
     };
 
-    const unsub = realtime.onStateUpdate(handleUpdate as any);
+    const unsub = realtime.onStateUpdate(handleUpdate);
     return () => {
-      unsub(); // Remove this specific listener on cleanup (factory manages the connection)
+      unsub();
     };
   }, [votingSession?.cardId, currentUserId]);
 
   const syncVotingSession = async () => {
     try {
+      if (typeof miro === 'undefined') return;
       let cardId = votingSession?.cardId;
       
-      // If we already have a cardId, just sync that specific card (High performance)
       if (cardId && cardId !== '0') {
-        const card = await miro.board.getById(cardId) as any;
-        if (card && card.getMetadata) {
-          const votingMetaKey = process.env.NEXT_PUBLIC_MIRO_METADATA_VOTING_KEY || "plus-sprint-tools";
-          const metadata = await card.getMetadata(votingMetaKey) as VotingSession | null;
+        const item = await miro.board.getById(cardId);
+        if (item && (item.type === 'card' || item.type === 'app_card')) {
+          const metadata = await getVotingMetadata(item as Card | AppCard);
           if (metadata && (metadata.status === 'voting' || metadata.status === 'revealed')) {
-            // Merge participants from local state + card metadata to avoid overwriting concurrent joins
             const mergedParticipants = Array.from(new Set([
               ...(votingSessionRef.current?.participants || []),
               ...(metadata.participants || [])
@@ -139,16 +140,14 @@ export function useVotingSession(
               ...(votingSessionRef.current?.userNames || {}),
               ...(metadata.userNames || {})
             };
-            const mergedState = {
+            const mergedState: VotingSession = {
               ...metadata,
               participants: mergedParticipants,
               userNames: mergedUserNames
             };
 
-            // Update local state with merged data
             setVotingSession(mergedState);
             
-            // Only broadcast if state actually changed (avoid spam on periodic sync)
             const prev = votingSessionRef.current;
             const hasChanges = !prev
               || mergedParticipants.length !== (prev.participants || []).length
@@ -156,11 +155,9 @@ export function useVotingSession(
               || metadata.status !== prev.status;
             
             if (hasChanges) {
-              const realtime = RealtimeFactory.getInstance();
-              realtime.updateState(metadata.cardId, mergedState as any);
+              await saveVotingMetadata(item as Card | AppCard, mergedState);
             }
             
-            // Notification trigger for others
             if (metadata.status === 'voting' && lastSessionId.current !== metadata.cardId) {
               const displayTitle = metadata.cardTitle.length > 50 
                 ? metadata.cardTitle.substring(0, 47) + "..." 
@@ -168,110 +165,73 @@ export function useVotingSession(
               await miro.board.notifications.showInfo(`Estimation Started: ${displayTitle}`);
               lastSessionId.current = metadata.cardId;
             }
-            return; // Done
+            return;
           }
         }
-        // If we reach here, the session on this card is gone
         setVotingSession(null);
         lastSessionId.current = null;
         cardId = undefined;
       }
 
-      // If no cardId or session ended, look for any active session on the board
-      const selection = await miro.board.getSelection();
-      if (selection.length === 1 && (selection[0].type === 'card' || selection[0].type === 'app_card')) {
-        cardId = selection[0].id;
-      } else {
-        const [cards, appCards] = await Promise.all([
-          miro.board.get({ type: 'card' }),
-          miro.board.get({ type: 'app_card' })
-        ]);
-        const allCards = [...cards, ...appCards];
-        
-        // Parallel check for faster discovery
-        const results = await Promise.all(allCards.map(async (c) => {
-          try {
-            const votingMetaKey = process.env.NEXT_PUBLIC_MIRO_METADATA_VOTING_KEY || "plus-sprint-tools";
-            const meta = await (c as any).getMetadata(votingMetaKey) as VotingSession | null;
-            return { id: c.id, meta };
-          } catch (e) {
-            return { id: c.id, meta: null };
-          }
-        }));
-
-        for (const { id, meta } of results) {
-          if (meta && (meta.status === 'voting' || meta.status === 'revealed')) {
-            cardId = id;
-            setVotingSession(meta);
-            
-            // Sync realtime server
-            const realtime = RealtimeFactory.getInstance();
-            realtime.updateState(id, meta as any);
-            break;
-          }
-        }
+      const activeSession = await findActiveVotingSession();
+      if (activeSession) {
+        setVotingSession(activeSession);
+        const realtime = RealtimeFactory.getInstance();
+        realtime.updateState(activeSession.cardId, {
+          ...activeSession,
+          participants: activeSession.participants || []
+        });
       }
-    } catch (e) {
-      // Silent fail
-    }
+    } catch (e: unknown) {}
   };
 
   React.useEffect(() => {
     syncVotingSession();
 
-    // Periodic auto-sync: re-read card metadata every 5s to self-heal dropped broadcasts
     if (votingSession?.cardId && votingSession.status === 'voting') {
       const interval = setInterval(syncVotingSession, 5000);
       return () => clearInterval(interval);
     }
   }, [votingSession?.cardId, votingSession?.status]);
 
-  // Separate, slow interval for online users (Doesn't need to be frequent)
   React.useEffect(() => {
     const updateOnline = async () => {
       try {
-        const users = await miro.board.getOnlineUsers();
-        setOnlineUsersCount(users.length);
-      } catch (e) {}
+        if (typeof miro !== 'undefined') {
+          const users = await miro.board.getOnlineUsers();
+          setOnlineUsersCount(users.length);
+        }
+      } catch (e: unknown) {}
     };
     updateOnline();
-    const interval = setInterval(updateOnline, 15000); // Every 15 seconds
+    const interval = setInterval(updateOnline, 15000);
     return () => clearInterval(interval);
   }, []);
 
-  // Auto-register presence in the room
   React.useEffect(() => {
     const joinRoom = async () => {
+      if (typeof miro === 'undefined') return;
       if (votingSession?.status === 'voting' && currentUserId && votingSession.cardId) {
         const participants = votingSession.participants || [];
         if (!participants.includes(currentUserId)) {
           try {
-            const card = await miro.board.getById(votingSession.cardId) as any;
-            if (card && card.setMetadata) {
-              const votingMetaKey = process.env.NEXT_PUBLIC_MIRO_METADATA_VOTING_KEY || "plus-sprint-tools";
-              const currentMeta = await card.getMetadata(votingMetaKey) as VotingSession | null;
+            const item = await miro.board.getById(votingSession.cardId);
+            if (item && (item.type === 'card' || item.type === 'app_card')) {
+              const card = item as Card | AppCard;
+              const currentMeta = await getVotingMetadata(card);
               if (currentMeta && currentMeta.status === 'voting') {
-                const newParticipants = [...(currentMeta.participants || []), currentUserId];
+                const uniqueParticipants = Array.from(new Set([...(currentMeta.participants || []), currentUserId]));
                 const newUserNames = { ...(currentMeta.userNames || {}), [currentUserId]: currentUserName };
-                // Unique values only
-                const uniqueParticipants = Array.from(new Set(newParticipants));
-                const updatedSession = {
+                const updatedSession: VotingSession = {
                   ...currentMeta,
                   participants: uniqueParticipants,
                   userNames: newUserNames
                 };
-                await card.setMetadata(votingMetaKey, updatedSession);
-                
-                // Broadcast the join to everyone else immediately
-                const realtime = RealtimeFactory.getInstance();
-                realtime.updateState(votingSession.cardId, updatedSession as any);
-                
+                await saveVotingMetadata(card, updatedSession);
                 setVotingSession(updatedSession);
               }
             }
-          } catch (e) {
-            // Ignore concurrent update errors
-          }
+          } catch (e: unknown) {}
         }
       }
     };
@@ -279,6 +239,7 @@ export function useVotingSession(
   }, [votingSession?.cardId, currentUserId, votingSession?.status]);
 
   const handleStartVoting = async () => {
+    if (typeof miro === 'undefined') return;
     if (selectedItems.length !== 1) {
       await miro.board.notifications.showError("Please select exactly one card to start voting");
       return;
@@ -286,7 +247,7 @@ export function useVotingSession(
 
     setIsProcessing(true);
     try {
-      const card = selectedItems[0] as any;
+      const card = selectedItems[0];
       const newSession: VotingSession = {
         cardId: card.id,
         cardTitle: (card.title || "").replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' '),
@@ -298,33 +259,12 @@ export function useVotingSession(
         estimateUnit
       };
 
-      if (card.setMetadata) {
-        const votingMetaKey = process.env.NEXT_PUBLIC_MIRO_METADATA_VOTING_KEY || "plus-sprint-tools";
-        await card.setMetadata(votingMetaKey, newSession);
-        setVotingSession(newSession);
-        
-        // Notify via realtime
-        const realtime = RealtimeFactory.getInstance();
-        realtime.updateState(card.id, newSession as any);
-        
-        setActiveTab('tools');
-        await miro.board.notifications.showInfo("Voting started!");
-      } else {
-        // Fallback for older SDK
-        card.metadata = card.metadata || {};
-        const votingMetaKey = process.env.NEXT_PUBLIC_MIRO_METADATA_VOTING_KEY || "plus-sprint-tools";
-        card.metadata[votingMetaKey] = newSession;
-        await card.sync();
-        setVotingSession(newSession);
-
-        const realtime = RealtimeFactory.getInstance();
-        realtime.updateState(card.id, newSession as any);
-
-        setActiveTab('tools');
-      }
-    } catch (e) {
+      await saveVotingMetadata(card, newSession);
+      setVotingSession(newSession);
+      setActiveTab('tools');
+      await miro.board.notifications.showInfo("Voting started!");
+    } catch (e: unknown) {
       console.error("Start voting failed", e);
-
       await miro.board.notifications.showError("Could not start voting");
     } finally {
       setIsProcessing(false);
@@ -332,26 +272,24 @@ export function useVotingSession(
   };
 
   const handleCastVote = async (points: string) => {
-    if (!votingSession) return;
+    if (typeof miro === 'undefined' || !votingSession) return;
 
     try {
-      const card = await miro.board.getById(votingSession.cardId) as any;
-      if (!card || !card.setMetadata) {
+      const item = await miro.board.getById(votingSession.cardId);
+      if (!item || (item.type !== 'card' && item.type !== 'app_card')) {
         await miro.board.notifications.showError("Voting card not found or inaccessible");
         return;
       }
+      const card = item as Card | AppCard;
 
-      // Retry logic for metadata update (max 2 attempts)
       let success = false;
       let attempts = 0;
       
       while (!success && attempts < 2) {
         try {
-          const votingMetaKey = process.env.NEXT_PUBLIC_MIRO_METADATA_VOTING_KEY || "plus-sprint-tools";
-          const currentMetadata = await card.getMetadata(votingMetaKey) as VotingSession;
+          const currentMetadata = await getVotingMetadata(card);
           const currentSession = currentMetadata || votingSession;
           
-          // Merge participants from local state + card to prevent overwriting concurrent joins
           const mergedParticipants = Array.from(new Set([
             ...(votingSessionRef.current?.participants || []),
             ...(currentSession.participants || [])
@@ -361,7 +299,7 @@ export function useVotingSession(
             ...(currentSession.userNames || {})
           };
 
-          const updatedSession = {
+          const updatedSession: VotingSession = {
             ...currentSession,
             participants: mergedParticipants,
             userNames: mergedUserNames,
@@ -376,24 +314,19 @@ export function useVotingSession(
             updatedSession.votes[currentUserId] = points;
           }
 
-          await card.setMetadata(votingMetaKey, updatedSession);
+          await saveVotingMetadata(card, updatedSession);
           setVotingSession(updatedSession);
-          
-          // Broadcast full state via realtime for instant sync
-          const realtime = RealtimeFactory.getInstance();
-          realtime.updateState(votingSession.cardId, updatedSession as any);
-          
           success = true;
         } catch (retryError) {
           attempts++;
           if (attempts >= 2) throw retryError;
-          await new Promise(resolve => setTimeout(resolve, 500)); // wait 500ms before retry
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Cast vote failed", e);
-
-      if (e.message?.includes("Metadata update failed")) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (message.includes("Metadata update failed")) {
         await miro.board.notifications.showError("Permission Denied: You need 'Edit' access to the board to vote.");
       } else {
         await miro.board.notifications.showError("Failed to cast vote. Please try again.");
@@ -406,84 +339,71 @@ export function useVotingSession(
   };
 
   const handleVoteAgain = async () => {
-    if (!votingSession) return;
-    const card = await miro.board.getById(votingSession.cardId) as any;
-    if (!card || !card.setMetadata) return;
+    if (typeof miro === 'undefined' || !votingSession) return;
+    const item = await miro.board.getById(votingSession.cardId);
+    if (!item || (item.type !== 'card' && item.type !== 'app_card')) return;
+    const card = item as Card | AppCard;
 
-    const updatedSession = {
+    const updatedSession: VotingSession = {
       ...votingSession,
-      status: 'voting' as const,
+      status: 'voting',
       votes: {}
     };
 
-    const votingMetaKey = process.env.NEXT_PUBLIC_MIRO_METADATA_VOTING_KEY || "plus-sprint-tools";
-    await card.setMetadata(votingMetaKey, updatedSession);
-    
-    // Broadcast to everyone
-    const realtime = RealtimeFactory.getInstance();
-    realtime.updateState(votingSession.cardId, updatedSession as any);
-    
+    await saveVotingMetadata(card, updatedSession);
     setVotingSession(updatedSession);
   };
 
   const handleRevealVotes = async () => {
-    if (!votingSession) return;
-    const card = await miro.board.getById(votingSession.cardId) as any;
-    if (!card || !card.setMetadata) return;
+    if (typeof miro === 'undefined' || !votingSession) return;
+    const item = await miro.board.getById(votingSession.cardId);
+    if (!item || (item.type !== 'card' && item.type !== 'app_card')) return;
+    const card = item as Card | AppCard;
 
-    const updatedSession = {
+    const updatedSession: VotingSession = {
       ...votingSession,
-      status: 'revealed' as const
+      status: 'revealed'
     };
 
-    const votingMetaKey = process.env.NEXT_PUBLIC_MIRO_METADATA_VOTING_KEY || "plus-sprint-tools";
-    await card.setMetadata(votingMetaKey, updatedSession);
-    
-    // Broadcast to everyone via realtime
-    const realtime = RealtimeFactory.getInstance();
-    realtime.updateState(votingSession.cardId, updatedSession as any);
-    
+    await saveVotingMetadata(card, updatedSession);
     setVotingSession(updatedSession);
   };
 
   const handleResetVoting = async () => {
-    if (!votingSession) return;
+    if (typeof miro === 'undefined' || !votingSession) return;
     const cardId = votingSession.cardId;
     
     try {
-      const card = await miro.board.getById(cardId) as any;
-      if (card && card.setMetadata) {
-        const votingMetaKey = process.env.NEXT_PUBLIC_MIRO_METADATA_VOTING_KEY || "plus-sprint-tools";
-        await card.setMetadata(votingMetaKey, null);
+      const item = await miro.board.getById(cardId);
+      if (item && (item.type === 'card' || item.type === 'app_card')) {
+        await saveVotingMetadata(item as Card | AppCard, null);
+      } else {
+        const realtime = RealtimeFactory.getInstance();
+        realtime.endSession(cardId);
       }
-      
-      // Notify realtime server to clear memory and broadcast to others
-      const realtime = RealtimeFactory.getInstance();
-      realtime.endSession(cardId);
       
       setVotingSession(null);
       lastSessionId.current = null;
       onFinished?.();
-    } catch (e) {
+    } catch (e: unknown) {
       console.error("useVotingSession: Reset voting failed", e);
     }
   };
 
   const handleApplyVote = async (points: string) => {
-    if (!votingSession) return;
+    if (typeof miro === 'undefined' || !votingSession) return;
     setIsProcessing(true);
     try {
-      // Apply points specifically to the card involved in the voting session
-      const card = await miro.board.getById(votingSession.cardId) as any;
-      if (card) {
+      const item = await miro.board.getById(votingSession.cardId);
+      if (item && (item.type === 'card' || item.type === 'app_card')) {
+        const card = item as Card | AppCard;
         await handleSetPoints(points, [card]);
       }
       await handleResetVoting();
       setActiveTab('tools');
       onFinished?.();
-    } catch (e) {
+    } catch (e: unknown) {
       console.error("Apply vote failed", e);
-
       await miro.board.notifications.showError("Failed to apply results to the card.");
     } finally {
       setIsProcessing(false);

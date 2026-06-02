@@ -1,14 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import { JiraService } from '@/utils/jiraService';
-
-export interface JiraConfig {
-  baseUrl: string;
-  email: string;
-  apiToken?: string;
-  accessToken?: string;
-  refreshToken?: string;
-  authType: 'basic' | 'oauth';
-}
+import { JiraService, type JiraConfig } from '@/services/jira/JiraService';
 
 /**
  * Hook to manage Jira Service instance and automatic token refreshing.
@@ -20,7 +11,7 @@ export function useJira() {
   const getActiveConfig = useCallback((): JiraConfig | null => {
     const configKey = process.env.NEXT_PUBLIC_LOCALSTORAGE_JIRA_CONFIG_KEY || "jira-config-v2";
     const saved = localStorage.getItem(configKey);
-    return saved ? JSON.parse(saved) : null;
+    return saved ? JSON.parse(saved) as JiraConfig : null;
   }, []);
 
   const saveConfig = useCallback((config: JiraConfig) => {
@@ -39,8 +30,9 @@ export function useJira() {
 
     try {
       return await operation(service);
-    } catch (error: any) {
-      const is401 = error.status === 401 || error.message?.includes("401");
+    } catch (error: unknown) {
+      const err = error as { status?: number, message?: string };
+      const is401 = err.status === 401 || err.message?.includes("401");
       
       // Handle OAuth Refresh
       if (is401 && config.authType === 'oauth' && config.refreshToken) {
@@ -87,13 +79,14 @@ export async function executeWithRefresh<T>(operation: (service: JiraService) =>
   const saved = localStorage.getItem(configKey);
   if (!saved) throw new Error("Jira not configured");
 
-  let config = JSON.parse(saved);
+  let config = JSON.parse(saved) as JiraConfig;
   let service = new JiraService(config);
 
   try {
     return await operation(service);
-  } catch (error: any) {
-    const is401 = error.status === 401 || error.message?.includes("401");
+  } catch (error: unknown) {
+    const err = error as { status?: number, message?: string };
+    const is401 = err.status === 401 || err.message?.includes("401");
     if (is401 && config.authType === 'oauth' && config.refreshToken) {
       const refreshData = await service.refreshAccessToken();
       const updatedConfig = {

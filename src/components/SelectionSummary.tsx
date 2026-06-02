@@ -1,24 +1,17 @@
 import * as React from "react";
 import { SummaryCard, SummaryRow, SummaryItem, SummaryDivider } from "./SummaryCard";
 import { Button } from "./Button";
+import { usePanel } from "@/contexts/PanelContext";
 
 interface SelectionSummaryProps {
-  summary: {
-    count: number;
-    points: number;
-    bucketedPoint: number;
-    hourRange: [number, number];
-    actualHours: number;
-  };
-  handleAction: (name: string, fn: () => Promise<any>) => void;
-  handleCreateSticky: (notes: string[], parentFrameId?: string) => Promise<any>;
+  handleCreateSticky: (notes: string[], parentFrameId?: string) => Promise<void>;
 }
 
 export const SelectionSummary: React.FC<SelectionSummaryProps> = ({
-  summary,
-  handleAction,
   handleCreateSticky,
 }) => {
+  const { summary, handleAction } = usePanel();
+
   return (
     <SummaryCard>
       <SummaryRow>
@@ -43,8 +36,10 @@ export const SelectionSummary: React.FC<SelectionSummaryProps> = ({
                 variant="icon" 
                 title="Create Black Sticky Notes for Points & Hours"
                 onClick={() => handleAction('create-sticky', async () => {
+                  if (typeof miro === 'undefined') return;
                   const selection = await miro.board.getSelection();
-                  const parentId = (selection[0] as any)?.parentId;
+                  const firstItem = selection[0] as unknown as { parentId?: string };
+                  const parentId = firstItem?.parentId;
                   const notes = [`${summary.points}pt`];
                   if (summary.actualHours > 0) notes.push(`${summary.actualHours}h`);
                   return handleCreateSticky(notes, parentId);
