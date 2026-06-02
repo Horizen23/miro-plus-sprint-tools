@@ -124,8 +124,17 @@ describe('JiraService', () => {
       });
       expect(oauthService.getApiBaseUrl()).toBe('https://api.atlassian.com/ex/jira/cloud-id/rest/api/3');
 
-      process.env.NEXT_PUBLIC_JIRA_API_BASE = originalBase;
-      process.env.NEXT_PUBLIC_JIRA_API_VERSION = originalVersion;
+      if (originalBase === undefined) {
+        delete process.env.NEXT_PUBLIC_JIRA_API_BASE;
+      } else {
+        process.env.NEXT_PUBLIC_JIRA_API_BASE = originalBase;
+      }
+      
+      if (originalVersion === undefined) {
+        delete process.env.NEXT_PUBLIC_JIRA_API_VERSION;
+      } else {
+        process.env.NEXT_PUBLIC_JIRA_API_VERSION = originalVersion;
+      }
     });
 
     it('should use Basic auth if oauth is requested but accessToken is missing', () => {

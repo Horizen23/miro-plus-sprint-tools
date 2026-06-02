@@ -3,7 +3,7 @@ import * as React from "react";
 import { JiraConfig, JiraService, JiraResource } from "../services/jira/JiraService";
 import { RealtimeFactory } from "../services/realtime/factory";
 
-const CLIENT_ID = process.env.NEXT_PUBLIC_JIRA_CLIENT_ID || "";
+
 const realtimeService = RealtimeFactory.getInstance();
 
 const getRedirectUri = (): string => {
@@ -140,6 +140,7 @@ export const JiraAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [config]);
 
   const startOAuth = () => {
+    const CLIENT_ID = process.env.NEXT_PUBLIC_JIRA_CLIENT_ID || "";
     if (!CLIENT_ID) {
       if (typeof miro !== 'undefined') {
         miro.board.notifications.showError("Missing JIRA_CLIENT_ID in environment variables.");

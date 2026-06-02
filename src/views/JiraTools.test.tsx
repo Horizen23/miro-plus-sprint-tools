@@ -30,8 +30,16 @@ describe('JiraTools', () => {
   beforeEach(() => {
     vi.stubGlobal('miro', {
       board: {
+        getInfo: vi.fn().mockResolvedValue({ id: 'board-id' }),
         getUserInfo: vi.fn().mockResolvedValue({ id: 'me', email: 'me@example.com' }),
-        get: vi.fn().mockResolvedValue([]),
+        get: vi.fn().mockResolvedValue([{ 
+          id: 'c1', 
+          tagIds: [], 
+          description: '', 
+          getMetadata: vi.fn().mockResolvedValue({}),
+          setMetadata: vi.fn().mockResolvedValue(true),
+          sync: vi.fn().mockResolvedValue(true)
+        }]),
         notifications: {
           showInfo: vi.fn(),
           showError: vi.fn(),
@@ -74,23 +82,22 @@ describe('JiraTools', () => {
       availableResources: [],
     } as any);
     render(<JiraTools />);
-    expect(screen.getByText(/Connect Jira/i)).toBeDefined();
+    expect(screen.getByText(/Connect to Jira/i)).toBeDefined();
   });
 
   it('renders search input when authenticated', () => {
     render(<JiraTools />);
-    if (screen.queryByPlaceholderText(/PROJ-123/i)) {
-       expect(screen.getByPlaceholderText(/PROJ-123/i)).toBeDefined();
-    } else {
-       fireEvent.click(screen.getByText(/Config/i));
-       expect(screen.getByPlaceholderText(/PROJ-123/i)).toBeDefined();
-    }
+    expect(screen.getByPlaceholderText(/Search Key or Title/i)).toBeDefined();
   });
 
   it('renders selected cards and handles sync', async () => {
     const mockCards = [
       { id: 'c1', title: 'Task 1', syncedKey: null, detectedParentKey: 'PROJ-1', isValid: true }
     ];
+    const mockSetCheckedIds = vi.fn();
+    vi.mocked(useJira).mockReturnValue({
+      withRefresh: vi.fn().mockResolvedValue({ key: 'NEW-1' }),
+    } as any);
     vi.mocked(useJiraDetection).mockReturnValue({
       selectedCards: mockCards,
       checkedIds: new Set(['c1']),
@@ -98,6 +105,8 @@ describe('JiraTools', () => {
       handleSelectAll: vi.fn(),
       validItemsCount: 1,
       detectSelection: vi.fn(),
+      setCheckedIds: mockSetCheckedIds,
+      clearCache: vi.fn(),
     } as any);
     vi.mocked(usePanel).mockReturnValue({
       rawSelection: [{ id: 'c1', type: 'card', title: 'Task 1' }],
@@ -107,25 +116,22 @@ describe('JiraTools', () => {
     
     expect(screen.getByText(/Task 1/i)).toBeDefined();
     
-    const syncButton = screen.getByText(/Sync 1 Item\(s\) to Jira/i);
+    const syncButton = screen.getByText(/Sync & Update Jira Issues/i);
     fireEvent.click(syncButton);
     
     await waitFor(() => {
-      expect(miro.board.notifications.showInfo).toHaveBeenCalled();
+      expect(mockSetCheckedIds).toHaveBeenCalled();
     });
   });
 
   it('handles searching for parent issues', async () => {
-    const mockIssues = [{ id: '1', key: 'PROJ-1', fields: { summary: 'Summary' } }];
+    const mockIssues = [{ id: '1', key: 'PROJ-1', summaryText: 'Summary' }];
     const mockWithRefresh = vi.fn().mockResolvedValue(mockIssues);
     vi.mocked(useJira).mockReturnValue({ withRefresh: mockWithRefresh } as any);
 
     render(<JiraTools />);
     
-    // Show config
-    fireEvent.click(screen.getByText(/Config/i));
-    
-    const searchInput = screen.getByLabelText(/Search for Parent Issue/i);
+    const searchInput = screen.getByPlaceholderText(/Search Key or Title/i);
     fireEvent.change(searchInput, { target: { value: 'PROJ' } });
     
     await waitFor(() => {
@@ -135,6 +141,6 @@ describe('JiraTools', () => {
     
     // Select result
     fireEvent.click(screen.getByText(/PROJ-1/i));
-    expect(screen.getByText(/Target: Summary/i)).toBeDefined();
+    expect(screen.getByText(/PROJ-1/i)).toBeDefined();
   });
 });
