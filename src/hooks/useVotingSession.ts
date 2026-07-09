@@ -55,7 +55,10 @@ export function useVotingSession(
         setCurrentUserId(info.id);
         setCurrentUserName(info.name || `User ${info.id.slice(-4)}`);
       } catch (e: unknown) {
-        console.error("Failed to fetch user info", e);
+        console.warn("Failed to fetch user info; voting will use an anonymous local user", e);
+        const fallbackId = `anonymous-${Date.now().toString(36)}`;
+        setCurrentUserId(fallbackId);
+        setCurrentUserName("Anonymous");
       }
     };
     fetchUser();

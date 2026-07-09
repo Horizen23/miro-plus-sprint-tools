@@ -4,12 +4,64 @@ import { notify } from './uiUtils';
 import { cacheUtils } from '../../utils/cacheUtils';
 
 const MIRO_BOARD_URL = process.env.NEXT_PUBLIC_MIRO_BOARD_URL || "https://miro.com/app/board/";
+const BACKUP_METADATA_KEY = "miro-plus-backup";
+const DEFAULT_CARD_WIDTH = 320;
+const MIRO_CREATED_CARD_HEIGHT = 88;
+const LARGE_CARD_HEIGHT_THRESHOLD = MIRO_CREATED_CARD_HEIGHT * 3;
+const DEBUG_MIRO = process.env.NEXT_PUBLIC_DEBUG_MIRO === 'true';
 
 interface ItemWithGlobal {
   item: Card | AppCard;
   globalX: number;
   globalY: number;
   parentFrame: Frame | null;
+}
+
+interface MovePlan {
+  card: Card | AppCard;
+  nextX: number;
+  nextY: number;
+}
+
+function getDuplicateCardWidth(item: Card | AppCard): number {
+  const width = (item as unknown as { width?: number }).width;
+  if (!Number.isFinite(width) || (width as number) <= 0) return DEFAULT_CARD_WIDTH;
+  const height = getDuplicateCardHeight(item);
+  if (height && height > LARGE_CARD_HEIGHT_THRESHOLD) {
+    return (width as number) * (MIRO_CREATED_CARD_HEIGHT / height);
+  }
+  return width as number;
+}
+
+function getDuplicateCardWidthStrategy(item: Card | AppCard): string {
+  const height = getDuplicateCardHeight(item);
+  return height && height > LARGE_CARD_HEIGHT_THRESHOLD ? 'aspect-ratio-to-miro-card-height' : 'preserve-width';
+}
+
+function getDuplicateCardHeight(item: Card | AppCard): number | undefined {
+  const height = (item as unknown as { height?: number }).height;
+  if (!Number.isFinite(height) || (height as number) <= 0) return undefined;
+  return height as number;
+}
+
+async function debugLog(event: string, payload: Record<string, unknown>): Promise<void> {
+  if (!DEBUG_MIRO) return;
+
+  const body = { event, timestamp: new Date().toISOString(), ...payload };
+  console.log(`[miroUtils:${event}]`, body);
+
+  if (process.env.NODE_ENV === 'test') return;
+  if (typeof fetch !== 'function') return;
+
+  try {
+    await fetch('/api/debug-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (e: unknown) {
+    // Browser console still has the local log above; server logging is best-effort.
+  }
 }
 
 /**
@@ -52,6 +104,229 @@ async function getGlobalCoords(item: Item): Promise<{ x: number, y: number, pare
     }
   }
   return { x: gx, y: gy, parentFrame: pFrame };
+}
+
+async function copyAllMetadata(source: unknown, target: unknown): Promise<void> {
+  const sourceItem = source as { getMetadata?: (key?: string) => Promise<unknown> };
+  const targetItem = target as { setMetadata?: (key: string, data: unknown) => Promise<void> };
+
+  if (typeof sourceItem.getMetadata !== 'function' || typeof targetItem.setMetadata !== 'function') return;
+
+  try {
+    const metadata = await sourceItem.getMetadata();
+    if (!metadata || typeof metadata !== 'object') return;
+
+    for (const [key, value] of Object.entries(metadata as Record<string, unknown>)) {
+      await targetItem.setMetadata(key, value);
+    }
+  } catch (e: unknown) {
+    console.warn("[miroUtils] Failed to copy backup metadata", e);
+  }
+}
+
+function isBackupSupportedItem(item: Item): boolean {
+  return [
+    'card',
+    'app_card',
+    'sticky_note',
+    'shape',
+    'text',
+    'image',
+    'preview',
+    'frame',
+  ].includes(item.type);
+}
+
+async function createBackupCopiesForItems(items: Item[], label: string): Promise<Item[]> {
+  if (items.length === 0) return [];
+
+  const supportedItems = items.filter(isBackupSupportedItem);
+  const itemsWithCoords: { item: Item; globalX: number; globalY: number; parentFrame: Frame | null; index: number }[] = [];
+  let minLeftGlobalX = Infinity;
+  let overallMaxRightX = -Infinity;
+
+  for (const [index, item] of supportedItems.entries()) {
+    const itemWidth = (item as unknown as { width?: number }).width ?? 320;
+    const { x: gx, y: gy, parentFrame: pFrame } = await getGlobalCoords(item);
+    itemsWithCoords.push({ item, globalX: gx, globalY: gy, parentFrame: pFrame, index });
+
+    const left = gx - itemWidth / 2;
+    const right = gx + itemWidth / 2;
+    if (left < minLeftGlobalX) minLeftGlobalX = left;
+    if (right > overallMaxRightX) overallMaxRightX = right;
+
+    if (pFrame) {
+      const pX = (pFrame as unknown as { x?: number }).x ?? 0;
+      const pWidth = (pFrame as unknown as { width?: number }).width ?? 0;
+      const frameRight = pX + pWidth / 2;
+      if (frameRight > overallMaxRightX) overallMaxRightX = frameRight;
+    }
+  }
+
+  if (minLeftGlobalX === Infinity || overallMaxRightX === -Infinity) return [];
+
+  const xOffsetBase = Number(process.env.NEXT_PUBLIC_MIRO_BACKUP_X_OFFSET || process.env.NEXT_PUBLIC_MIRO_X_OFFSET || 100);
+  const xOffset = (overallMaxRightX - minLeftGlobalX) + xOffsetBase;
+  const timestamp = new Date().toLocaleString();
+  const backupItems: Item[] = [];
+
+  const creationOrder = [...itemsWithCoords].sort((a, b) => {
+    if (a.item.type === 'frame' && b.item.type !== 'frame') return -1;
+    if (a.item.type !== 'frame' && b.item.type === 'frame') return 1;
+    return a.index - b.index;
+  });
+
+  for (const data of creationOrder) {
+    const { item, globalX, globalY } = data;
+    const targetX = globalX + xOffset;
+    const targetY = globalY;
+    let backupItem: Item;
+
+    if (item.type === 'card') {
+      const c = item as Card;
+      backupItem = await miro.board.createCard({
+        title: `[BACKUP ${label}] ${c.title || ""}`,
+        description: c.description || "",
+        style: c.style,
+        x: targetX,
+        y: targetY,
+        width: (c as unknown as { width?: number }).width ?? 320,
+        rotation: (c as unknown as { rotation?: number }).rotation ?? 0,
+        dueDate: c.dueDate,
+        startDate: c.startDate,
+        assignee: c.assignee?.userId ? { userId: c.assignee.userId } : undefined,
+        taskStatus: c.taskStatus,
+        tagIds: c.tagIds || [],
+        fields: c.fields || [],
+      });
+    } else if (item.type === 'app_card') {
+      const ac = item as AppCard;
+      backupItem = await miro.board.createAppCard({
+        title: `[BACKUP ${label}] ${ac.title || ""}`,
+        description: ac.description || "",
+        style: ac.style,
+        x: targetX,
+        y: targetY,
+        width: (ac as unknown as { width?: number }).width ?? 320,
+        rotation: (ac as unknown as { rotation?: number }).rotation ?? 0,
+        status: ac.status || 'disconnected',
+        fields: ac.fields || [],
+        tagIds: ac.tagIds || [],
+      });
+    } else if (item.type === 'sticky_note') {
+      const sticky = item as unknown as {
+        content?: string;
+        style?: unknown;
+        width?: number;
+        height?: number;
+        shape?: string;
+        linkedTo?: string;
+        tagIds?: string[];
+      };
+      backupItem = await miro.board.createStickyNote({
+        content: sticky.content || "",
+        style: sticky.style as never,
+        x: targetX,
+        y: targetY,
+        width: sticky.width,
+        shape: sticky.shape as never,
+        linkedTo: sticky.linkedTo,
+        tagIds: sticky.tagIds || [],
+      });
+    } else if (item.type === 'shape') {
+      const shape = item as unknown as {
+        content?: string;
+        style?: unknown;
+        width?: number;
+        height?: number;
+        shape?: string;
+        rotation?: number;
+        linkedTo?: string;
+      };
+      backupItem = await miro.board.createShape({
+        content: shape.content || "",
+        style: shape.style as never,
+        x: targetX,
+        y: targetY,
+        width: shape.width,
+        shape: shape.shape as never,
+        rotation: shape.rotation ?? 0,
+        linkedTo: shape.linkedTo,
+      } as never);
+    } else if (item.type === 'text') {
+      const text = item as unknown as {
+        content?: string;
+        style?: unknown;
+        width?: number;
+        rotation?: number;
+        linkedTo?: string;
+      };
+      backupItem = await miro.board.createText({
+        content: text.content || "",
+        style: text.style as never,
+        x: targetX,
+        y: targetY,
+        width: text.width,
+        rotation: text.rotation ?? 0,
+        linkedTo: text.linkedTo,
+      });
+    } else if (item.type === 'image') {
+      const image = item as unknown as {
+        url?: string;
+        title?: string;
+        alt?: string;
+        width?: number;
+        height?: number;
+        rotation?: number;
+      };
+      if (!image.url) continue;
+      backupItem = await miro.board.createImage({
+        url: image.url,
+        title: image.title ? `[BACKUP ${label}] ${image.title}` : `[BACKUP ${label}] Image`,
+        alt: image.alt,
+        x: targetX,
+        y: targetY,
+        width: image.width,
+        rotation: image.rotation ?? 0,
+      } as never);
+    } else if (item.type === 'preview') {
+      const preview = item as unknown as {
+        url?: string;
+        width?: number;
+        height?: number;
+      };
+      if (!preview.url) continue;
+      backupItem = await miro.board.createPreview({
+        url: preview.url,
+        x: targetX,
+        y: targetY,
+        width: preview.width,
+      } as never);
+    } else if (item.type === 'frame') {
+      const frame = item as Frame;
+      backupItem = await miro.board.createFrame({
+        title: `[BACKUP ${label}] ${frame.title || "Frame"}`,
+        style: frame.style,
+        x: targetX,
+        y: targetY,
+        width: frame.width,
+        height: frame.height,
+        showContent: (frame as unknown as { showContent?: boolean }).showContent,
+      });
+    } else {
+      continue;
+    }
+
+    await copyAllMetadata(item, backupItem);
+    await backupItem.setMetadata(BACKUP_METADATA_KEY, {
+      backupOf: item.id,
+      backupAction: label,
+      backupCreatedAt: timestamp,
+    });
+    backupItems.push(backupItem);
+  }
+
+  return backupItems;
 }
 
 export async function handleDuplicateAndLink(): Promise<void> {
@@ -109,6 +384,38 @@ export async function handleDuplicateAndLink(): Promise<void> {
     try {
       const targetX = globalX + X_OFFSET;
       const targetY = globalY;
+      const originalShape = originalCard as unknown as {
+        x?: number;
+        y?: number;
+        width?: number;
+        height?: number;
+        parentId?: string;
+        rotation?: number;
+        fields?: unknown[];
+      };
+
+      await debugLog('duplicate.before-create', {
+        id: originalCard.id,
+        type: originalCard.type,
+        title: originalCard.title || "",
+        parentId: originalShape.parentId || null,
+        localX: originalShape.x,
+        localY: originalShape.y,
+        globalX,
+        globalY,
+        targetX,
+        targetY,
+        originalWidth: originalShape.width,
+        originalHeight: originalShape.height,
+        duplicateWidth: getDuplicateCardWidth(originalCard),
+        duplicateHeight: getDuplicateCardHeight(originalCard),
+        duplicateWidthStrategy: getDuplicateCardWidthStrategy(originalCard),
+        rotation: originalShape.rotation,
+        fieldsCount: originalShape.fields?.length || 0,
+        xOffset: X_OFFSET,
+        minLeftGlobalX,
+        overallMaxRightX,
+      });
 
       let newItem: Card | AppCard;
 
@@ -120,14 +427,14 @@ export async function handleDuplicateAndLink(): Promise<void> {
           style: c.style,
           x: targetX,
           y: targetY,
-          width: (c as unknown as { width?: number }).width ?? 320,
+          width: getDuplicateCardWidth(c),
           rotation: (c as unknown as { rotation?: number }).rotation ?? 0,
           dueDate: c.dueDate,
           startDate: c.startDate,
           assignee: c.assignee?.userId ? { userId: c.assignee.userId } : undefined,
           taskStatus: c.taskStatus,
           tagIds: c.tagIds || [],
-        });
+        } as never);
       } else {
         const ac = originalCard as AppCard;
         newItem = await miro.board.createAppCard({
@@ -136,13 +443,29 @@ export async function handleDuplicateAndLink(): Promise<void> {
           style: ac.style,
           x: targetX,
           y: targetY,
-          width: (ac as unknown as { width?: number }).width ?? 320,
+          width: getDuplicateCardWidth(ac),
           rotation: (ac as unknown as { rotation?: number }).rotation ?? 0,
           status: ac.status || 'disconnected',
           fields: ac.fields || [],
           tagIds: ac.tagIds || [],
-        });
+        } as never);
       }
+
+      await debugLog('duplicate.after-create', {
+        originalId: originalCard.id,
+        newId: newItem.id,
+        newType: newItem.type,
+        newTitle: newItem.title || "",
+        newX: (newItem as unknown as { x?: number }).x,
+        newY: (newItem as unknown as { y?: number }).y,
+        newWidth: (newItem as unknown as { width?: number }).width,
+        newHeight: (newItem as unknown as { height?: number }).height,
+      });
+
+      await debugLog('duplicate.before-sync', {
+        originalId: originalCard.id,
+        newId: newItem.id,
+      });
       
       // Delay briefly for SDK sync
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -160,6 +483,26 @@ export async function handleDuplicateAndLink(): Promise<void> {
 
       (newItem as unknown as { linkedTo?: string }).linkedTo = originalUrl;
       await newItem.sync();
+      if (DEBUG_MIRO) {
+        try {
+          const freshNewItem = await miro.board.getById(newItem.id);
+          await debugLog('duplicate.after-sync', {
+            originalId: originalCard.id,
+            newId: newItem.id,
+            freshType: freshNewItem?.type,
+            freshX: (freshNewItem as unknown as { x?: number })?.x,
+            freshY: (freshNewItem as unknown as { y?: number })?.y,
+            freshWidth: (freshNewItem as unknown as { width?: number })?.width,
+            freshHeight: (freshNewItem as unknown as { height?: number })?.height,
+          });
+        } catch (e: unknown) {
+          await debugLog('duplicate.after-sync-fetch-failed', {
+            originalId: originalCard.id,
+            newId: newItem.id,
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
       newItems.push(newItem);
 
       // Bidirectional link (with retry)
@@ -384,10 +727,15 @@ export async function handleCreateRefinementFrame(): Promise<void> {
 
       const trackB = workflow.filter((w) => w.track === 'T');
 
+      // Keep refinement bounded: one workflow set per source frame by default.
+      // Creating one workflow per child card can explode into dozens of new cards.
+      const maxSourceCards = Math.max(1, Number(process.env.NEXT_PUBLIC_REFINEMENT_MAX_SOURCE_CARDS || 1));
+      const sourceCardsForRefinement = cardsInside.slice(0, maxSourceCards);
+
       // If no cards found, create a placeholder template
       const itemsToProcess: { title: string, x?: number, y?: number, fields?: unknown[] }[] =
-        cardsInside.length > 0
-          ? cardsInside
+        sourceCardsForRefinement.length > 0
+          ? sourceCardsForRefinement
           : [
               {
                 title: '[Template] New Item',
@@ -565,50 +913,88 @@ export async function handleCreateSticky(texts: string[], parentFrameId?: string
  * Reorders selected cards vertically based on their sequence logic.
  */
 export async function handleReorderSelectedCards(): Promise<void> {
-  const cards = await getSelectedCards();
-  
+  if (typeof miro === 'undefined') return;
+
+  const selection = await miro.board.getSelection();
+  const cards = selection.filter((item): item is Card | AppCard =>
+    item.type === "card" || item.type === "app_card"
+  );
+
   if (cards.length === 0) {
     await notify("Please select at least one card to reorder", "error");
     return;
   }
 
-  const sortedCards = [...cards].sort((a, b) => {
-    const dataA = parseCardTitle(a.title || "");
-    const dataB = parseCardTitle(b.title || "");
-    return compareSequences(dataA.seq, dataB.seq);
-  });
+  const groups = new Map<string, (Card | AppCard)[]>();
 
-  let minLeft = Infinity;
-  let minY = Infinity;
-  
-  cards.forEach(c => {
-    const cardObj = c as unknown as { x?: number, y?: number, width?: number, height?: number };
-    const w = cardObj.width ?? 0;
-    const h = cardObj.height ?? 0;
-    const left = (cardObj.x ?? 0) - w / 2;
-    const top = (cardObj.y ?? 0) - h / 2;
-    
-    if (left < minLeft) minLeft = left;
-    if (top < minY) minY = top;
-  });
-
-  if (minLeft === Infinity) minLeft = 0;
-  if (minY === Infinity) minY = 0;
-
-  let currentY = minY;
-  const margin = 20;
-
-  for (const card of sortedCards) {
-    const cardObj = card as unknown as { x: number, y: number, width?: number, height?: number, sync: () => Promise<void> };
-    const cardWidth = cardObj.width ?? 200;
-    const cardHeight = cardObj.height ?? 120;
-    
-    cardObj.x = minLeft + (cardWidth / 2);
-    cardObj.y = currentY + (cardHeight / 2);
-    await cardObj.sync();
-    
-    currentY += cardHeight + margin;
+  for (const card of cards) {
+    const parentId = (card as unknown as { parentId?: string }).parentId || "__board__";
+    groups.set(parentId, [...(groups.get(parentId) || []), card]);
   }
 
-  await notify(`Reordered ${sortedCards.length} cards by sequence`);
+  const margin = 20;
+  const movePlans: MovePlan[] = [];
+
+  for (const groupCards of groups.values()) {
+    const sortedCards = [...groupCards].sort((a, b) => {
+      const dataA = parseCardTitle(a.title || "");
+      const dataB = parseCardTitle(b.title || "");
+      return compareSequences(dataA.seq, dataB.seq);
+    });
+
+    let minLeft = Infinity;
+    let minY = Infinity;
+
+    groupCards.forEach(c => {
+      const cardObj = c as unknown as { x?: number, y?: number, width?: number, height?: number };
+      const w = cardObj.width ?? 0;
+      const h = cardObj.height ?? 0;
+      const left = (cardObj.x ?? 0) - w / 2;
+      const top = (cardObj.y ?? 0) - h / 2;
+
+      if (left < minLeft) minLeft = left;
+      if (top < minY) minY = top;
+    });
+
+    if (minLeft === Infinity) minLeft = 0;
+    if (minY === Infinity) minY = 0;
+
+    let currentY = minY;
+
+    for (const card of sortedCards) {
+      const cardObj = card as unknown as { x: number, y: number, width?: number, height?: number, sync: () => Promise<void> };
+      const cardWidth = cardObj.width ?? 200;
+      const cardHeight = cardObj.height ?? 120;
+      const nextX = minLeft + (cardWidth / 2);
+      const nextY = currentY + (cardHeight / 2);
+
+      if (cardObj.x !== nextX || cardObj.y !== nextY) {
+        movePlans.push({ card, nextX, nextY });
+      }
+
+      currentY += cardHeight + margin;
+    }
+  }
+
+  if (movePlans.length === 0) {
+    await notify("No cards needed reordering");
+    return;
+  }
+
+  try {
+    await createBackupCopiesForItems(selection, "before reorder");
+  } catch (e: unknown) {
+    console.error("[miroUtils] Failed to create reorder backup", e);
+    await notify("Backup failed. Reorder cancelled.", "error");
+    return;
+  }
+
+  for (const plan of movePlans) {
+    const cardObj = plan.card as unknown as { x: number, y: number, sync: () => Promise<void> };
+    cardObj.x = plan.nextX;
+    cardObj.y = plan.nextY;
+    await cardObj.sync();
+  }
+
+  await notify(`Backed up and reordered ${movePlans.length} cards by sequence`);
 }

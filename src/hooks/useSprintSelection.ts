@@ -11,6 +11,45 @@ import {
   handleClearMetadata,
 } from "../services/miro/miroUtils";
 
+async function debugSelectionLog(items: Item[]): Promise<void> {
+  if (process.env.NEXT_PUBLIC_DEBUG_MIRO !== 'true') return;
+  if (process.env.NODE_ENV === 'test' || typeof fetch !== 'function') return;
+
+  try {
+    await fetch('/api/debug-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event: 'selection.update',
+        timestamp: new Date().toISOString(),
+        count: items.length,
+        items: items.map(item => {
+          const shape = item as unknown as {
+            title?: string;
+            x?: number;
+            y?: number;
+            width?: number;
+            height?: number;
+            parentId?: string;
+            linkedTo?: string;
+          };
+          return {
+            id: item.id,
+            type: item.type,
+            title: shape.title || "",
+            parentId: shape.parentId || null,
+            x: shape.x,
+            y: shape.y,
+            width: shape.width,
+            height: shape.height,
+            linkedTo: shape.linkedTo || null,
+          };
+        }),
+      }),
+    });
+  } catch (e: unknown) {}
+}
+
 export interface InspectedMetadata {
   title: string;
   data: unknown;
@@ -60,6 +99,7 @@ export function useSprintSelection(): UseSprintSelectionReturn {
         if (typeof miro === 'undefined') return;
         const items = await miro.board.getSelection();
         const filteredItems = items.filter(item => item.type === 'card' || item.type === 'app_card');
+        await debugSelectionLog(filteredItems);
         if (!unmounted) {
           setRawSelection(prev => {
             const prevIds = prev.map(i => i.id).join(',');
