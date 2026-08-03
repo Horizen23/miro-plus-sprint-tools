@@ -23,6 +23,70 @@ interface MovePlan {
   nextY: number;
 }
 
+export type MiroItemPositionSnapshot = {
+  id: string;
+  x: number;
+  y: number;
+  parentId: string | null;
+  relativeTo: 'canvas_center' | 'parent_top_left' | 'parent_center';
+};
+
+type PositionableMiroItem = {
+  id?: string;
+  x?: number;
+  y?: number;
+  parentId?: string | null;
+  relativeTo?: string;
+  sync?: () => Promise<unknown>;
+};
+
+const VALID_RELATIVE_TO = new Set<MiroItemPositionSnapshot['relativeTo']>([
+  'canvas_center',
+  'parent_top_left',
+  'parent_center',
+]);
+
+/** Capture an item's coordinates without treating zero as a missing value. */
+export function captureItemPosition(item: PositionableMiroItem): MiroItemPositionSnapshot {
+  if (!item.id) throw new Error('Item has no id');
+  if (!Number.isFinite(item.x) || !Number.isFinite(item.y)) {
+    throw new Error(`Item ${item.id} has invalid coordinates`);
+  }
+
+  const parentId = item.parentId || null;
+  const defaultRelativeTo = parentId ? 'parent_top_left' : 'canvas_center';
+  const relativeTo = item.relativeTo ?? defaultRelativeTo;
+  if (!VALID_RELATIVE_TO.has(relativeTo as MiroItemPositionSnapshot['relativeTo'])) {
+    throw new Error(`Item ${item.id} has invalid relativeTo value`);
+  }
+
+  return {
+    id: item.id,
+    x: item.x as number,
+    y: item.y as number,
+    parentId,
+    relativeTo: relativeTo as MiroItemPositionSnapshot['relativeTo'],
+  };
+}
+
+/** Restore onto a freshly loaded SDK item, provided its coordinate space is unchanged. */
+export async function restoreItemPosition(snapshot: MiroItemPositionSnapshot): Promise<void> {
+  const latestItem = await miro.board.getById(snapshot.id) as unknown as PositionableMiroItem | null;
+  if (!latestItem) throw new Error(`Item ${snapshot.id} no longer exists`);
+
+  const currentParentId = latestItem.parentId || null;
+  if (currentParentId !== snapshot.parentId) {
+    throw new Error(
+      `Item ${snapshot.id} parent changed from ${snapshot.parentId ?? 'canvas'} to ${currentParentId ?? 'canvas'}`
+    );
+  }
+  if (typeof latestItem.sync !== 'function') throw new Error(`Item ${snapshot.id} cannot be synced`);
+
+  latestItem.relativeTo = snapshot.relativeTo;
+  latestItem.x = snapshot.x;
+  latestItem.y = snapshot.y;
+  await latestItem.sync();
+}
 function getDuplicateCardWidth(item: Card | AppCard): number {
   const width = (item as unknown as { width?: number }).width;
   if (!Number.isFinite(width) || (width as number) <= 0) return DEFAULT_CARD_WIDTH;

@@ -6,7 +6,9 @@ import {
   handleDuplicateAndLink,
   handleSyncMetadataFromParent,
   handleCreateRefinementFrame,
-  handleCreateSticky
+  handleCreateSticky,
+  captureItemPosition,
+  restoreItemPosition,
 } from './miroUtils';
 
 describe('miroUtils', () => {
@@ -77,6 +79,45 @@ describe('miroUtils', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+  });
+
+  describe('item position snapshots', () => {
+    it('captures and restores canvas coordinates including zero using a fresh item', async () => {
+      const staleItem = { id: 'c1', x: 0, y: 0, relativeTo: 'canvas_center', sync: vi.fn() };
+      const latestItem = { id: 'c1', x: 99, y: 88, relativeTo: 'canvas_center', sync: vi.fn().mockResolvedValue(undefined) };
+      const snapshot = captureItemPosition(staleItem);
+      vi.mocked(miro.board.getById).mockResolvedValue(latestItem as any);
+
+      await restoreItemPosition(snapshot);
+
+      expect(snapshot).toEqual({ id: 'c1', x: 0, y: 0, parentId: null, relativeTo: 'canvas_center' });
+      expect(latestItem).toMatchObject({ x: 0, y: 0, relativeTo: 'canvas_center' });
+      expect(latestItem.sync).toHaveBeenCalledOnce();
+      expect(staleItem.sync).not.toHaveBeenCalled();
+    });
+
+    it('restores local frame coordinates and preserves parent-relative positioning', async () => {
+      const snapshot = captureItemPosition({ id: 'c1', x: 12, y: 34, parentId: 'frame-1' });
+      const latestItem = { id: 'c1', x: 500, y: 600, parentId: 'frame-1', sync: vi.fn().mockResolvedValue(undefined) };
+      vi.mocked(miro.board.getById).mockResolvedValue(latestItem as any);
+
+      await restoreItemPosition(snapshot);
+
+      expect(snapshot.relativeTo).toBe('parent_top_left');
+      expect(latestItem).toMatchObject({ x: 12, y: 34, relativeTo: 'parent_top_left' });
+    });
+
+    it('rejects invalid coordinates and refuses to restore across coordinate spaces', async () => {
+      expect(() => captureItemPosition({ id: 'bad', x: Number.NaN, y: 0 })).toThrow('invalid coordinates');
+      const latestItem = { id: 'c1', x: 1, y: 2, parentId: 'frame-2', sync: vi.fn() };
+      vi.mocked(miro.board.getById).mockResolvedValue(latestItem as any);
+
+      await expect(restoreItemPosition({
+        id: 'c1', x: 10, y: 20, parentId: 'frame-1', relativeTo: 'parent_top_left'
+      })).rejects.toThrow('parent changed');
+      expect(latestItem).toMatchObject({ x: 1, y: 2 });
+      expect(latestItem.sync).not.toHaveBeenCalled();
+    });
   });
 
   describe('handleDuplicateAndLink', () => {

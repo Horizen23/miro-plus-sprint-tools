@@ -28,18 +28,24 @@ describe('JiraTools', () => {
   const mockGlobalConfig = { config: { tsUserMapping: '', jiraStoryPointsField: 'field' } };
   
   beforeEach(() => {
+    const boardCard = {
+      id: 'c1',
+      type: 'card',
+      x: 0,
+      y: 0,
+      relativeTo: 'canvas_center',
+      tagIds: [],
+      description: '',
+      getMetadata: vi.fn().mockResolvedValue({}),
+      setMetadata: vi.fn().mockResolvedValue(true),
+      sync: vi.fn().mockResolvedValue(true)
+    };
     vi.stubGlobal('miro', {
       board: {
         getInfo: vi.fn().mockResolvedValue({ id: 'board-id' }),
         getUserInfo: vi.fn().mockResolvedValue({ id: 'me', email: 'me@example.com' }),
-        get: vi.fn().mockResolvedValue([{ 
-          id: 'c1', 
-          tagIds: [], 
-          description: '', 
-          getMetadata: vi.fn().mockResolvedValue({}),
-          setMetadata: vi.fn().mockResolvedValue(true),
-          sync: vi.fn().mockResolvedValue(true)
-        }]),
+        get: vi.fn().mockResolvedValue([boardCard]),
+        getById: vi.fn().mockResolvedValue({ ...boardCard, sync: vi.fn().mockResolvedValue(true) }),
         notifications: {
           showInfo: vi.fn(),
           showError: vi.fn(),
@@ -69,6 +75,7 @@ describe('JiraTools', () => {
       toggleCheck: vi.fn(),
       handleSelectAll: vi.fn(),
       validItemsCount: 0,
+      clearCache: vi.fn(),
     } as any);
     vi.mocked(useJira).mockReturnValue({
       withRefresh: vi.fn(),
@@ -122,6 +129,65 @@ describe('JiraTools', () => {
     await waitFor(() => {
       expect(mockSetCheckedIds).toHaveBeenCalled();
     });
+  });
+
+  it('aborts before Jira mutation when a position snapshot is invalid', async () => {
+    const mockWithRefresh = vi.fn();
+    const mockSetCheckedIds = vi.fn();
+    vi.mocked(miro.board.get).mockResolvedValue([{
+      id: 'c1', type: 'card', x: undefined, y: 0, description: '', tagIds: []
+    } as any]);
+    vi.mocked(useJira).mockReturnValue({ withRefresh: mockWithRefresh } as any);
+    vi.mocked(useJiraDetection).mockReturnValue({
+      selectedCards: [{ id: 'c1', title: 'Bad card', detectedParentKey: 'PROJ-1' }],
+      checkedIds: new Set(['c1']), setCheckedIds: mockSetCheckedIds,
+      toggleCheck: vi.fn(), handleSelectAll: vi.fn(), validItemsCount: 1,
+      detectSelection: vi.fn(), clearCache: vi.fn(),
+    } as any);
+
+    render(<JiraTools />);
+    fireEvent.click(screen.getByText(/Sync & Update Jira Issues/i));
+
+    await waitFor(() => expect(miro.board.notifications.showError).toHaveBeenCalledWith(expect.stringContaining('Bad card')));
+    expect(mockWithRefresh).not.toHaveBeenCalled();
+    expect(mockSetCheckedIds).not.toHaveBeenCalled();
+  });
+
+  it('waits for restoration on a freshly loaded card before clearing selection state', async () => {
+    let finishRestore!: () => void;
+    const restorePending = new Promise<void>(resolve => { finishRestore = resolve; });
+    const originalItem = {
+      id: 'c1', type: 'card', x: 10, y: 20, relativeTo: 'canvas_center',
+      tagIds: [], description: '', getMetadata: vi.fn().mockResolvedValue({}),
+      setMetadata: vi.fn().mockResolvedValue(undefined), sync: vi.fn().mockResolvedValue(undefined),
+    };
+    const latestItem = {
+      ...originalItem, x: 999, y: 999,
+      sync: vi.fn().mockImplementation(() => restorePending),
+    };
+    vi.mocked(miro.board.get).mockResolvedValue([originalItem as any]);
+    vi.mocked(miro.board.getById).mockResolvedValue(latestItem as any);
+    const mockSetCheckedIds = vi.fn();
+    const mockClearCache = vi.fn();
+    vi.mocked(useJira).mockReturnValue({ withRefresh: vi.fn().mockResolvedValue({ key: 'NEW-1' }) } as any);
+    vi.mocked(useJiraDetection).mockReturnValue({
+      selectedCards: [{ id: 'c1', title: 'Task 1', description: '', detectedParentKey: 'PROJ-1' }],
+      checkedIds: new Set(['c1']), setCheckedIds: mockSetCheckedIds,
+      toggleCheck: vi.fn(), handleSelectAll: vi.fn(), validItemsCount: 1,
+      detectSelection: vi.fn(), clearCache: mockClearCache,
+    } as any);
+
+    render(<JiraTools />);
+    fireEvent.click(screen.getByText(/Sync & Update Jira Issues/i));
+    await waitFor(() => expect(latestItem.sync).toHaveBeenCalledOnce());
+    expect(originalItem.sync).toHaveBeenCalledOnce();
+    expect(mockSetCheckedIds).not.toHaveBeenCalled();
+    expect(mockClearCache).not.toHaveBeenCalled();
+
+    finishRestore();
+    await waitFor(() => expect(mockSetCheckedIds).toHaveBeenCalled());
+    expect(mockClearCache).toHaveBeenCalledOnce();
+    expect(latestItem).toMatchObject({ x: 10, y: 20, relativeTo: 'canvas_center' });
   });
 
   it('handles searching for parent issues', async () => {

@@ -15,6 +15,7 @@ import { notify } from "../services/miro/uiUtils";
 import { cacheUtils } from "../utils/cacheUtils";
 import { useDebounce } from "../hooks/useDebounce";
 import { useJiraDetection } from "../hooks/useJiraDetection";
+import { captureItemPosition, restoreItemPosition, type MiroItemPositionSnapshot } from "../services/miro/miroUtils";
 
 import { usePanel } from "@/contexts/PanelContext";
 
@@ -99,16 +100,33 @@ export const JiraTools: React.FC = () => {
     let createCount = 0;
     let updateCount = 0;
     const baseUrl = config.baseUrl || "";
+    const syncErrors: string[] = [];
+    const restorationErrors: string[] = [];
     
     try {
+      // Capture every position before any Jira call or Miro mutation. Abort the
+      // whole batch if even one card cannot be captured safely.
+      const originalCards = await miro.board.get({ id: cardsToSync.map(c => c.id) });
+      const originalCardsMap = new Map(originalCards.map(c => [c.id, c]));
+      const positionSnapshots = new Map<string, MiroItemPositionSnapshot>();
+      const snapshotErrors: string[] = [];
+      for (const card of cardsToSync) {
+        const item = originalCardsMap.get(card.id);
+        try {
+          if (!item) throw new Error('Card could not be loaded');
+          positionSnapshots.set(card.id, captureItemPosition(item));
+        } catch (error) {
+          snapshotErrors.push(`${card.title || card.id} (${card.id}): ${(error as Error).message}`);
+        }
+      }
+      if (snapshotErrors.length > 0) {
+        throw new Error(`Position snapshot failed: ${snapshotErrors.join('; ')}`);
+      }
+
       const boardInfo = await miro.board.getInfo();
       const boardId = boardInfo.id;
       const userInfo = await miro.board.getUserInfo();
       const currentMiroUserId = userInfo.id;
-
-      // Batch Fetch all original cards at once
-      const originalCards = await miro.board.get({ id: cardsToSync.map(c => c.id) });
-      const originalCardsMap = new Map(originalCards.map(c => [c.id, c]));
 
       const mapping = parseUserMapping(globalConfig?.tsUserMapping || "");
       const getJiraAccountId = async (miroUser: string) => {
@@ -232,18 +250,42 @@ export const JiraTools: React.FC = () => {
             await originalItem.sync();
 
           } catch (err: any) {
-            if (err.message?.includes("404")) {
-              await originalItem.setMetadata(metadataKey, null);
-              await originalItem.sync();
-            } else throw err;
+            try {
+              if (err.message?.includes("404")) {
+                await originalItem.setMetadata(metadataKey, null);
+                await originalItem.sync();
+              } else {
+                throw err;
+              }
+            } catch (syncError) {
+              syncErrors.push(`${card.title || card.id} (${card.id}): ${(syncError as Error).message}`);
+            }
+          } finally {
+            const snapshot = positionSnapshots.get(card.id);
+            if (snapshot) {
+              try {
+                await restoreItemPosition(snapshot);
+              } catch (restoreError) {
+                restorationErrors.push(`${card.title || card.id} (${card.id}): ${(restoreError as Error).message}`);
+              }
+            }
           }
         }));
       }
 
-      // Removed success notifications to reduce UI noise
-      setCheckedIds(new Set());
-      clearCache();
-      setTimeout(() => detectSelection(), 200);
+      if (syncErrors.length > 0) {
+        notify(`Jira sync failed: ${syncErrors.join('; ')}`, "error");
+      }
+      if (restorationErrors.length > 0) {
+        notify(`Card position restoration failed: ${restorationErrors.join('; ')}`, "error");
+      }
+
+      if (syncErrors.length === 0 && restorationErrors.length === 0) {
+        // All restoration promises have completed before selection state changes.
+        setCheckedIds(new Set());
+        clearCache();
+        setTimeout(() => detectSelection(), 200);
+      }
     } catch (e) { notify("Sync Error: " + (e as Error).message, "error"); }
     finally { setIsProcessing(false); }
   }, [selectedCards, checkedIds, config, globalConfig, withRefresh, appParentKey, detectSelection, setCheckedIds, clearCache]);
